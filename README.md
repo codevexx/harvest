@@ -87,7 +87,8 @@ start /wait "" "%LOCALAPPDATA%\Programs\Harvest\Harvest.exe" --connect YOUR_TOKE
 | **Website bot** | opens a URL in headless Chromium and runs your JavaScript inside the page | Playwright, installed with one click from the app's settings |
 
 Upload a single file or a whole folder (up to 50 MB). Anything a task saves in its `outputs/` folder
-(path in `HARVEST_OUTPUTS`) is zipped and can be downloaded from the dashboard when it finishes.
+(path in `HARVEST_OUTPUTS`) is zipped and can be downloaded from the dashboard when it finishes. Each
+account has 100 MB of storage for uploads and outputs, kept for 30 days.
 To get a live chart, print one JSON line per episode:
 
 ```python

@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.3.1
+
+- Safer file handling: a PC refuses to unpack an upload that would expand past 250 MB, and output
+  uploads report the server's reason (for example "Your storage is full") in the task output.
+- Storage limits: each account has 100 MB for uploads and outputs, kept for 30 days. Outputs are checked
+  on the server before they are accepted (no paths outside the folder, no links, no zip bombs) and
+  download from a separate address as plain files.
+
 ## v0.3.0
 
 - **Much less network traffic.** Idle PCs check in every 15 to 30 seconds with one request (was three

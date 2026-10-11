@@ -114,6 +114,17 @@ SLOW_AFTER = 600
 FLUSH_EVERY = 10    # seconds between progress updates while a task runs
 
 
+def _raise_with_message(r) -> None:
+    """Like raise_for_status, but with the server's own explanation (e.g. storage full)."""
+    if r.status_code < 400:
+        return
+    try:
+        msg = r.json().get("error")
+    except ValueError:
+        msg = None
+    raise RuntimeError(msg or f"server returned {r.status_code}")
+
+
 class OutputsDisabled(Exception):
     """The server has no file storage, so outputs cannot be uploaded."""
 
@@ -185,30 +196,40 @@ class Client:
             "episodes": episodes, "logs": logs, "episodes_done": episodes_done})
         return r.json().get("status")
 
+    MAX_BUNDLE = 250 * 1024 * 1024  # never unpack an upload past this (zip-bomb guard)
+
     def files(self, job_id) -> dict:
         """A large task's files, stored on the server as one gzipped JSON bundle."""
+        import zlib
         r = self.s.get(f"{self.base}/api/agent/files", params={"job_id": job_id}, timeout=300)
-        r.raise_for_status()
-        return json.loads(gzip.decompress(r.content))
+        _raise_with_message(r)
+        d = zlib.decompressobj(16 + zlib.MAX_WBITS)  # gzip
+        data = d.decompress(r.content, self.MAX_BUNDLE + 1)
+        if len(data) > self.MAX_BUNDLE or d.unconsumed_tail:
+            raise RuntimeError("the task's files unpack to more than 250 MB; refusing")
+        files = json.loads(data)
+        if not isinstance(files, dict) or len(files) > 10000:
+            raise RuntimeError("the task's files are not in the expected format")
+        return files
 
     def upload_output(self, job_id, path: Path, size: int, manifest: list) -> None:
         """Upload outputs.zip in pieces (each under the server's request limit)."""
         r = self.s.post(f"{self.base}/api/agent/output/start", json={"job_id": job_id, "size": size}, timeout=30)
         if r.status_code == 501:
             raise OutputsDisabled()
-        r.raise_for_status()
+        _raise_with_message(r)
         up = r.json()
         parts, n = [], 1
         with open(path, "rb") as f:
             while chunk := f.read(up["part_size"]):
                 pr = self.s.put(f"{self.base}/api/agent/output/part", data=chunk, timeout=900,
                                 params={"job_id": job_id, "upload_id": up["upload_id"], "n": n})
-                pr.raise_for_status()
+                _raise_with_message(pr)
                 parts.append(pr.json())
                 n += 1
-        self.s.post(f"{self.base}/api/agent/output/complete", timeout=60, json={
+        _raise_with_message(self.s.post(f"{self.base}/api/agent/output/complete", timeout=60, json={
             "job_id": job_id, "upload_id": up["upload_id"], "parts": parts, "files": manifest,
-        }).raise_for_status()
+        }))
 
     def episode(self, job_id, index, reward, steps, extra):
         if self.cloud:
@@ -525,7 +546,7 @@ def _upload_outputs(client: Client, job_id: str, log) -> None:
     except OutputsDisabled:
         log("outputs were not uploaded: file storage is not enabled on the server yet")
     except Exception as e:
-        log(f"uploading outputs failed: {e}")
+        log(f"outputs were not saved: {e}")
     finally:
         zpath.unlink(missing_ok=True)
 
