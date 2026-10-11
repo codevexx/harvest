@@ -29,7 +29,8 @@ except ImportError:
     psutil = None
 
 from . import idle
-from .runner import NO_WINDOW, _node_exe, _python_exe, cleanup, run_job, task_dir
+from . import runtimes as setup_mod
+from .runner import NO_WINDOW, _node_exe, _python_exe, cleanup, reset_discovery, run_job, task_dir
 
 CONFIG_PATH = Path(__file__).parent / "worker.config.json"
 
@@ -52,16 +53,10 @@ def detect_gpu() -> tuple[str | None, bool]:
 def detect_runtimes() -> list[str]:
     """Which task kinds this machine can run: python, node, browser."""
     found = []
-    py = _python_exe()  # None if the PC has no real Python (never the Store placeholder)
-    if py:
+    if _python_exe():  # None if the PC has no real Python (never the Store placeholder)
         found.append("python")
-        try:  # website bots need Playwright in that same Python
-            r = subprocess.run([py, "-c", "import playwright"], capture_output=True,
-                               timeout=20, creationflags=NO_WINDOW)
-            if r.returncode == 0:
-                found.append("browser")
-        except Exception:
-            pass
+    if setup_mod.playwright_python(_python_exe):  # user's Python with Playwright, or Harvest's own
+        found.append("browser")
     if _node_exe():
         found.append("node")
     return found
@@ -416,13 +411,44 @@ def run_agent(cfg: dict, stop_event=None, on_status=None, on_info=None) -> None:
     runtimes = specs["runtimes"]  # may be empty: then this PC takes no tasks
     client = Client(cfg["coordinator"], cfg.get("token"))
 
+    # Missing Python / Node.js / website support? Install it in the background
+    # (worker/runtimes.py) and tell the server what this PC can run once done.
+    want_browser = cfg.get("setup_browser", True)
+    needs_setup = (cfg.get("auto_setup", True) and setup_mod.supported() and
+                   (not _python_exe() or not _node_exe() or (want_browser and "browser" not in runtimes)))
+    setup_done = threading.Event()
+
+    def info(**kw):
+        if on_info:
+            try:
+                on_info(kw)
+            except Exception:
+                pass
+
+    def run_setup():
+        def log(msg):
+            print(f"setup: {msg}")
+            info(setup=msg)
+        try:
+            problems = setup_mod.ensure(_python_exe, _node_exe, want_browser, log)
+        except Exception as e:
+            problems = [str(e)]
+        reset_discovery()
+        for p in problems:
+            print(f"setup problem: {p}")
+        info(setup=None, setup_problems=problems)
+        setup_done.set()
+
+    if needs_setup:
+        specs["setup"] = "Installing what tasks need (Python, Node.js, website support)"
+        threading.Thread(target=run_setup, daemon=True).start()
+
     def connect():
         # Register, retrying until connected (or stopped).
         while not stopped():
             try:
                 client.register(cfg["name"], specs)
-                if on_info:
-                    on_info({"farm": getattr(client, "farm", None), "runtimes": runtimes})
+                info(farm=getattr(client, "farm", None), runtimes=runtimes)
                 return True
             except requests.RequestException:
                 status("offline", "idle", "connecting")
@@ -439,6 +465,13 @@ def run_agent(cfg: dict, stop_event=None, on_status=None, on_info=None) -> None:
     last_poll, last_mode, quiet_since = 0.0, None, time.monotonic()
     while not stopped():
         try:
+            if setup_done.is_set():  # new runtimes installed: report them
+                setup_done.clear()
+                specs = detect_specs()
+                runtimes = specs["runtimes"]
+                if not connect():
+                    return
+                last_poll = 0.0
             mode = idle.get_mode(cfg)
             now = time.monotonic()
             interval = SLOW_POLL if now - quiet_since > SLOW_AFTER else IDLE_POLL

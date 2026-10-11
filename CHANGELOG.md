@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.5.0
+
+- **Sets itself up.** If a PC has no Python or Node.js, Harvest downloads its own private copies (official
+  Python from nuget.org, Node.js LTS from nodejs.org) plus Playwright and Chromium for website bots. Every
+  download is checked against its published checksum and its publisher's digital signature, nothing needs
+  admin rights, and it all lives in `%LOCALAPPDATA%\Harvest\runtimes`. Your own Python and Node are used
+  first and never modified. Turn it off in Settings if you prefer.
+- Website-bot support always goes into Harvest's own Python.
+- The dashboard shows when a machine is still setting up.
+
 ## v0.4.0
 
 - **Finds Python reliably.** Looks in PATH, the `py` launcher, the Windows registry and the usual install

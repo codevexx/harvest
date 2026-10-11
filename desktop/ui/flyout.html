@@ -158,6 +158,7 @@
       <button class="btn tonal" id="pauseBtn" onclick="togglePause()"></button>
       <button class="btn outlined" onclick="call('open_dashboard')"><svg class="i"><use href="#open"/></svg>Dashboard</button>
     </div>
+    <div class="banner hide" id="setupBox"></div>
     <div class="banner hide" id="upd"></div>
   </div>
   <div class="foot"><span class="v" id="ver"></span><button class="link" id="chk" onclick="call('check_updates')">Check for updates</button><button class="link" onclick="call('quit')">Quit</button></div>
@@ -176,6 +177,8 @@
     <div class="group">
       <div class="row"><div class="l"><div class="a">Start with Windows</div><div class="b">Runs quietly in the tray after you sign in</div></div>
         <label class="switch"><input type="checkbox" id="f-autostart"><span class="tr"></span><span class="th"></span></label></div>
+      <div class="row"><div class="l"><div class="a">Install what tasks need</div><div class="b">Python, Node.js and website support, kept inside Harvest's own folder</div></div>
+        <label class="switch"><input type="checkbox" id="f-autosetup"><span class="tr"></span><span class="th"></span></label></div>
       <div class="row" id="svcRow"><div class="l"><div class="a">Run before anyone signs in</div><div class="b" id="svcSub">Starts when the PC turns on. Windows asks for admin once.</div></div>
         <label class="switch"><input type="checkbox" id="f-service"><span class="tr"></span><span class="th"></span></label></div>
       <div class="row"><div class="l"><div class="a">Update automatically</div><div class="b">Installs new versions when no task is running</div></div>
@@ -222,6 +225,7 @@ window.hv = {
     if (!$("#s-name").value) $("#s-name").value = s.name;
     renderHome(s);
     renderWeb(s.website || {});
+    renderSetup(s);
     $("#svcSub").textContent = s.service_busy ? "Waiting for the admin prompt" :
       s.service ? "On. Works even when nobody is signed in." : "Starts when the PC turns on. Windows asks for admin once.";
   },
@@ -256,6 +260,17 @@ function renderHome(s) {
   } else { b.innerHTML = ""; }
   b.classList.toggle("hide", !b.innerHTML);
 }
+function renderSetup(s) {
+  var b = $("#setupBox"), probs = s.setup_problems || [];
+  if (s.setup) {
+    b.innerHTML = '<div class="t"><b>Setting up this PC</b>' + esc(s.setup) + '</div>';
+  } else if (probs.length) {
+    b.innerHTML = '<div class="t"><b>Some tools could not be installed</b>' + probs.map(esc).join("<br>") + '</div>';
+  } else if (!(s.runtimes || []).length && s.connected && s.status && s.status.mode !== "offline") {
+    b.innerHTML = '<div class="t"><b>This PC cannot run tasks yet</b>Turn on "Install what tasks need" in Settings, or install Python from python.org.</div>';
+  } else { b.innerHTML = ""; }
+  b.classList.toggle("hide", !b.innerHTML);
+}
 function renderWeb(w) {
   var btn = $("#webBtn");
   if (w.installing) { $("#webStatus").textContent = w.log || "Installing"; btn.disabled = true; btn.textContent = "Installing"; }
@@ -269,7 +284,8 @@ function openSettings() {
   $("#f-autostart").checked = !!S.autostart; $("#f-autoupdate").checked = !!S.auto_update;
   $("#f-server").value = S.server; $("#f-idle").value = Math.round((S.idle_threshold || 300) / 60);
   $("#f-autostart").closest(".row").classList.toggle("hide", !S.can_autostart);
-  $("#f-service").checked = !!S.service; $("#svcRow").classList.toggle("hide", !S.can_autostart);
+  $("#f-service").checked = !!S.service;
+  $("#f-autosetup").checked = S.auto_setup !== false; $("#svcRow").classList.toggle("hide", !S.can_autostart);
   $("#f-err").textContent = ""; show("settings");
 }
 function save() {
@@ -278,6 +294,7 @@ function save() {
     games: $("#f-games").value.split(/[,\n]/).map(function (g) { return g.trim(); }).filter(Boolean),
     autostart: $("#f-autostart").checked, auto_update: $("#f-autoupdate").checked,
     service: $("#f-service").checked,
+    auto_setup: $("#f-autosetup").checked,
     server: $("#f-server").value.trim(), idle_minutes: parseInt($("#f-idle").value, 10) || 5,
   };
   call("save_settings", cfg).then(function (err) { if (err) $("#f-err").textContent = err; else show("home"); });

@@ -84,11 +84,16 @@ start /wait "" "%LOCALAPPDATA%\Programs\Harvest\Harvest.exe" --connect YOUR_TOKE
 
 ## What you can run
 
-| Kind | How it runs | Needs on the PC |
-|------|-------------|-----------------|
-| **Python** | `python <file> [args]` in its own task folder; packages from `requirements.txt` are installed once per PC | Python 3.11+ |
-| **Node.js** | `node <file> [args]`, after `npm install` if there is a `package.json` | Node.js |
-| **Website bot** | opens a URL in headless Chromium and runs your JavaScript inside the page | Playwright, installed with one click from the app's settings |
+| Kind | How it runs |
+|------|-------------|
+| **Python** | `python <file> [args]` in its own task folder; packages from `requirements.txt` are installed once per PC |
+| **Node.js** | `node <file> [args]`, after `npm install` if there is a `package.json` |
+| **Website bot** | opens a URL in headless Chromium and runs your JavaScript inside the page |
+
+Nothing to install by hand: if a PC has no Python or Node.js, the app downloads its own private copies
+(and Playwright with Chromium for website bots), checks each against its published checksum and digital
+signature, and keeps them inside `%LOCALAPPDATA%\Harvest\runtimes`. No admin rights, and a Python or Node
+you installed yourself is used first and never modified.
 
 Upload a single file or a whole folder (up to 50 MB). Nothing in your code has to change. Anything a task saves in its `outputs/` folder
 (path in `HARVEST_OUTPUTS`) is zipped and can be downloaded from the dashboard when it finishes. Each

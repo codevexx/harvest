@@ -46,7 +46,7 @@ FROZEN = getattr(sys, "frozen", False)
 CONFIG_DIR = Path(os.environ.get("APPDATA") or os.path.expanduser("~/.config")) / APP_NAME
 CONFIG_PATH = CONFIG_DIR / "config.json"
 SAVED_KEYS = ("coordinator", "token", "name", "poll_interval", "idle_threshold",
-              "pause_on_fullscreen", "games", "auto_update", "python")
+              "pause_on_fullscreen", "games", "auto_update", "python", "auto_setup")
 
 DOT = {  # status -> badge color on the tray icon
     "full": (52, 168, 83), "light": (251, 188, 4), "busy": (66, 133, 244),
@@ -60,7 +60,7 @@ def load_config() -> dict:
     cfg = {
         "coordinator": DEFAULT_COORDINATOR, "token": "", "name": socket.gethostname(),
         "poll_interval": 3, "idle_threshold": 300, "pause_on_fullscreen": True,
-        "games": [], "auto_update": True,
+        "games": [], "auto_update": True, "auto_setup": True,
     }
     try:
         if CONFIG_PATH.exists():
@@ -155,6 +155,8 @@ class App:
         self.runtimes: list[str] = []
         self.finished = 0
         self.website = {"installing": False, "log": None, "error": None}
+        self.setup = None          # what the automatic setup is doing right now
+        self.setup_problems = []   # what it could not install
         self.stop_event: threading.Event | None = None
         self.thread: threading.Thread | None = None
         self.quitting = threading.Event()
@@ -190,6 +192,8 @@ class App:
             "user_paused": c.get("user_paused", False), "finished": self.finished,
             "runtimes": self.runtimes, "update": self.updater.snapshot(),
             "website": dict(self.website, ready="browser" in self.runtimes),
+            "setup": self.setup, "setup_problems": self.setup_problems,
+            "auto_setup": c.get("auto_setup", True),
         }
 
     def push(self) -> None:
@@ -224,8 +228,15 @@ class App:
         self.push()
 
     def _on_info(self, info):
-        self.farm = info.get("farm")
-        self.runtimes = info.get("runtimes") or []
+        # Only the keys the agent sent: setup progress arrives separately from farm/runtimes.
+        if "farm" in info:
+            self.farm = info["farm"]
+        if "runtimes" in info:
+            self.runtimes = info["runtimes"] or []
+        if "setup" in info:
+            self.setup = info["setup"]
+        if "setup_problems" in info:
+            self.setup_problems = info["setup_problems"] or []
         self.push()
 
     def start_agent(self):
@@ -283,6 +294,10 @@ class App:
             c["games"] = [g for g in data["games"] if g][:50]
         if "auto_update" in data:
             c["auto_update"] = bool(data["auto_update"])
+        if "auto_setup" in data:
+            if bool(data["auto_setup"]) and not c.get("auto_setup", True):
+                restart = True  # turning it on: let the agent install what is missing now
+            c["auto_setup"] = bool(data["auto_setup"])
         if "idle_minutes" in data:
             c["idle_threshold"] = max(1, min(240, int(data["idle_minutes"]))) * 60
         if "autostart" in data and IS_WIN and FROZEN:
@@ -309,37 +324,22 @@ class App:
         self.push()
 
     def install_website_support(self):
-        """pip install playwright + its Chromium into the Python that runs tasks."""
+        """Playwright + Chromium into Harvest's own Python (never the user's)."""
+        from worker import runtimes as setup_mod
         w = self.website
-        w.update(installing=True, error=None, log="Installing Playwright")
+        w.update(installing=True, error=None, log="Preparing")
         self.push()
-        py = _python_exe()
-        if not py:
-            w.update(installing=False, error="Install Python 3.11+ first (python.org), then try again")
+
+        def log(msg):
+            w["log"] = msg[:70]
             self.push()
-            return
-        steps = [([py, "-m", "pip", "install", "--upgrade", "playwright"], "Installing Playwright"),
-                 ([py, "-m", "playwright", "install", "chromium"], "Downloading Chrome")]
         try:
-            for cmd, label in steps:
-                w["log"] = label
-                self.push()
-                p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                     text=True, creationflags=NO_WINDOW)
-                last = 0.0
-                for line in p.stdout:
-                    if time.monotonic() - last > 1 and line.strip():
-                        w["log"] = f"{label}: {line.strip()[:60]}"
-                        last = time.monotonic()
-                        self.push()
-                if p.wait() != 0:
-                    raise RuntimeError(f"{label} failed")
+            private = setup_mod.managed_python() or setup_mod.install_python(log)
+            setup_mod.install_playwright(private, log)
             w.update(installing=False, log=None)
             self.restart_agent()  # re-detect what this PC can run
-        except FileNotFoundError:
-            w.update(installing=False, error="Install Python 3.11+ first (python.org), then try again")
         except Exception as e:
-            w.update(installing=False, error=str(e))
+            w.update(installing=False, error=str(e)[:120])
         self.push()
 
     # --- flyout ---

@@ -35,6 +35,7 @@ import time
 from pathlib import Path
 from typing import Callable
 
+from . import runtimes
 from .browser_harness import HARNESS
 
 def _real_python(exe: str | None) -> str | None:
@@ -119,6 +120,9 @@ def _python_exe() -> str | None:
                 except (OSError, subprocess.SubprocessError):
                     pass
         candidates += _windows_pythons()
+        managed = runtimes.managed_python()  # Harvest's own copy (see runtimes.py)
+        if managed:
+            candidates.append(managed)
     for exe in candidates:
         real = _real_python(exe)
         if real:
@@ -152,7 +156,24 @@ NO_WINDOW = 0x08000000 if sys.platform.startswith("win") else 0  # CREATE_NO_WIN
 
 
 def _node_exe() -> str | None:
-    return shutil.which("node")
+    found = shutil.which("node")
+    if found:
+        return found
+    d = runtimes.managed_node_dir()
+    return os.path.join(d, "node.exe") if d else None
+
+
+def _npm_exe() -> str | None:
+    found = shutil.which("npm")
+    if found:
+        return found
+    d = runtimes.managed_node_dir()
+    return os.path.join(d, "npm.cmd") if d and os.path.exists(os.path.join(d, "npm.cmd")) else None
+
+
+def reset_discovery() -> None:
+    """Forget cached interpreter paths (after Harvest installed a runtime)."""
+    _PYTHON.clear()
 
 
 # Python tasks with a requirements.txt get their own environment, built once per
@@ -252,8 +273,11 @@ def _command(spec: dict, work: Path, on_log, env, should_stop):
         node = _node_exe()
         if not node:
             raise RuntimeError("Node.js is not installed on this machine")
+        node_dir = os.path.dirname(node)
+        if node_dir not in env.get("PATH", "").split(os.pathsep):  # so npm and scripts find node
+            env["PATH"] = node_dir + os.pathsep + env.get("PATH", "")
         if (work / "package.json").exists() and not (work / "node_modules").exists():
-            npm = shutil.which("npm")
+            npm = _npm_exe()
             if not npm:
                 on_log("package.json found but npm is not installed; skipping npm install")
             else:
@@ -269,9 +293,10 @@ def _command(spec: dict, work: Path, on_log, env, should_stop):
             "url": spec["url"], "script_file": entry, "runs": spec.get("runs", 1),
             "timeout_s": spec.get("timeout_s", 60), "headless": spec.get("headless", True),
         }), encoding="utf-8")
-        py = _python_exe()
+        py = runtimes.playwright_python(_python_exe)
         if not py:
-            raise RuntimeError("Python was not found on this PC (website bots need Python with Playwright)")
+            raise RuntimeError("website tasks are not set up on this PC (Harvest installs them automatically, "
+                               "or use Settings > Website tasks > Set up in the Harvest app)")
         return [py, "-u", "_harvest_browser.py"]
     py = _python_env(work, on_log, env, should_stop)
     if py is INTERRUPTED:
