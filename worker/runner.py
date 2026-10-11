@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import re
 import json
 import os
 import queue
@@ -36,21 +37,94 @@ from typing import Callable
 
 from .browser_harness import HARNESS
 
-def _python_exe() -> str:
-    """Interpreter used to run task scripts. In a packaged build (PyInstaller)
-    sys.executable is the app itself, so use the Python the user installed
-    (HARVEST_PYTHON overrides). The Microsoft Store "python" stub in
-    WindowsApps only opens the Store, so it is skipped."""
+def _real_python(exe: str | None) -> str | None:
+    """exe if it is a working interpreter (not the Microsoft Store placeholder)."""
+    if not exe or "WindowsApps" in exe or not os.path.isfile(exe):
+        return None
+    try:
+        r = subprocess.run([exe, "-c", "import sys; print(sys.executable)"], capture_output=True,
+                           text=True, timeout=15, creationflags=NO_WINDOW)
+        out = r.stdout.strip()
+        return out if r.returncode == 0 and out and "WindowsApps" not in out else None
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def _windows_pythons() -> list[str]:
+    """Pythons registered in the Windows registry and common install folders,
+    newest first. Finds an install even when it is not on PATH."""
+    found: list[tuple[tuple, str]] = []
+    try:
+        import winreg
+        for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+            for view in (winreg.KEY_WOW64_64KEY, winreg.KEY_WOW64_32KEY):
+                try:
+                    core = winreg.OpenKey(hive, r"SOFTWARE\Python\PythonCore", 0, winreg.KEY_READ | view)
+                except OSError:
+                    continue
+                for i in range(winreg.QueryInfoKey(core)[0]):
+                    tag = winreg.EnumKey(core, i)
+                    try:
+                        with winreg.OpenKey(core, tag + r"\InstallPath", 0, winreg.KEY_READ | view) as k:
+                            try:
+                                exe = winreg.QueryValueEx(k, "ExecutablePath")[0]
+                            except OSError:  # older installs only record the folder
+                                exe = os.path.join(winreg.QueryValueEx(k, "")[0], "python.exe")
+                    except OSError:
+                        continue
+                    nums = tuple(int(x) for x in re.findall(r"\d+", tag)[:2])
+                    found.append((nums, exe))
+    except ImportError:
+        pass
+    import glob
+    for pattern in (os.path.expandvars(r"%LOCALAPPDATA%\Programs\Python\Python3*\python.exe"),
+                    r"C:\Program Files\Python3*\python.exe", r"C:\Python3*\python.exe"):
+        for exe in glob.glob(pattern):
+            nums = tuple(int(x) for x in re.findall(r"Python(\d)(\d+)", exe)[0]) if re.search(r"Python(\d)(\d+)", exe) else (3, 0)
+            found.append((nums, exe))
+    found.sort(reverse=True)
+    return [exe for _, exe in found]
+
+
+_PYTHON: list = []  # cached discovery result
+
+
+def _python_exe() -> str | None:
+    """Interpreter used to run task scripts, or None if the PC has no usable
+    Python. In a packaged build (PyInstaller) sys.executable is the app itself,
+    so look for the Python the user installed: HARVEST_PYTHON, then PATH, then
+    the py launcher, the registry and the usual install folders. The Microsoft
+    Store "python" placeholder in WindowsApps is never used."""
     if not getattr(sys, "frozen", False):
         return sys.executable
-    if os.environ.get("HARVEST_PYTHON"):
+    if os.environ.get("HARVEST_PYTHON") and _real_python(os.environ["HARVEST_PYTHON"]):
         return os.environ["HARVEST_PYTHON"]
-    for name in ("python", "python3", "py"):
+    if _PYTHON:
+        return _PYTHON[0]
+    candidates = []
+    for name in ("python", "python3"):
         for d in os.environ.get("PATH", "").split(os.pathsep):
             exe = shutil.which(name, path=d)
-            if exe and "WindowsApps" not in exe:
-                return exe
-    return "python"
+            if exe:
+                candidates.append(exe)
+    if sys.platform.startswith("win"):
+        for launcher in (shutil.which("py"), r"C:\Windows\py.exe",
+                         os.path.expandvars(r"%LOCALAPPDATA%\Programs\Python\Launcher\py.exe")):
+            if launcher and os.path.isfile(launcher):
+                try:  # ask the launcher where the newest Python 3 lives
+                    r = subprocess.run([launcher, "-3", "-c", "import sys; print(sys.executable)"],
+                                       capture_output=True, text=True, timeout=15, creationflags=NO_WINDOW)
+                    if r.returncode == 0:
+                        candidates.append(r.stdout.strip())
+                except (OSError, subprocess.SubprocessError):
+                    pass
+        candidates += _windows_pythons()
+    for exe in candidates:
+        real = _real_python(exe)
+        if real:
+            _PYTHON.append(real)
+            return real
+    return None
 
 
 # Each job gets a stable folder here (keyed by job id) instead of a throwaway
@@ -121,6 +195,9 @@ def _python_env(work: Path, on_log, env, should_stop):
     """The Python to run this task with: the PC's own, or (if the task has a
     requirements.txt) a saved environment with those packages installed."""
     base = _python_exe()
+    if not base:
+        raise RuntimeError("Python was not found on this PC. Install Python 3.11+ from python.org "
+                           "(tick 'Add python.exe to PATH'), then restart Harvest")
     req = work / "requirements.txt"
     if not req.exists():
         return base
@@ -192,7 +269,10 @@ def _command(spec: dict, work: Path, on_log, env, should_stop):
             "url": spec["url"], "script_file": entry, "runs": spec.get("runs", 1),
             "timeout_s": spec.get("timeout_s", 60), "headless": spec.get("headless", True),
         }), encoding="utf-8")
-        return [_python_exe(), "-u", "_harvest_browser.py"]
+        py = _python_exe()
+        if not py:
+            raise RuntimeError("Python was not found on this PC (website bots need Python with Playwright)")
+        return [py, "-u", "_harvest_browser.py"]
     py = _python_env(work, on_log, env, should_stop)
     if py is INTERRUPTED:
         return INTERRUPTED
@@ -222,6 +302,7 @@ def run_job(
     should_stop: Callable[[], bool],
     mode: str,
     resume_from: int,
+    on_total: Callable[[int], None] | None = None,
 ) -> tuple[str, str | None]:
     """Returns (status, error): status is 'done' | 'failed' | 'interrupted'."""
     spec = job["spec"]
@@ -287,7 +368,18 @@ def run_job(
                     obj = json.loads(line)
                 except json.JSONDecodeError:
                     obj = None
-            if isinstance(obj, dict) and "episode" in obj:
+            if isinstance(obj, dict) and isinstance(obj.get("progress"), dict):
+                # General form: {"progress": {"step": 3, "value": 0.81, "total": 100}}
+                pr = obj["progress"]
+                try:
+                    on_episode(int(pr.get("step", 0)), float(pr.get("value") or 0),
+                               int(pr.get("steps", 0) or 0), pr.get("extra") or {})
+                    if on_total and pr.get("total"):
+                        on_total(int(pr["total"]))
+                except (TypeError, ValueError):
+                    on_log(line)
+            elif isinstance(obj, dict) and "episode" in obj:
+                # Reinforcement-learning form: {"episode": {"index": i, "reward": r}}
                 e = obj["episode"]
                 on_episode(
                     int(e["index"]), float(e.get("reward", 0)),

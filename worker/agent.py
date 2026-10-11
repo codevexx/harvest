@@ -52,17 +52,16 @@ def detect_gpu() -> tuple[str | None, bool]:
 def detect_runtimes() -> list[str]:
     """Which task kinds this machine can run: python, node, browser."""
     found = []
-    try:
-        subprocess.run([_python_exe(), "--version"], capture_output=True, timeout=10,
-                       check=True, creationflags=NO_WINDOW)
+    py = _python_exe()  # None if the PC has no real Python (never the Store placeholder)
+    if py:
         found.append("python")
-        # Website bots need Playwright in that same Python.
-        r = subprocess.run([_python_exe(), "-c", "import playwright"], capture_output=True,
-                           timeout=20, creationflags=NO_WINDOW)
-        if r.returncode == 0:
-            found.append("browser")
-    except Exception:
-        pass
+        try:  # website bots need Playwright in that same Python
+            r = subprocess.run([py, "-c", "import playwright"], capture_output=True,
+                               timeout=20, creationflags=NO_WINDOW)
+            if r.returncode == 0:
+                found.append("browser")
+        except Exception:
+            pass
     if _node_exe():
         found.append("node")
     return found
@@ -144,6 +143,7 @@ class Client:
         if token:
             self.s.headers["authorization"] = f"Bearer {token}"
         self.worker_id: str | None = None
+        self.poll_hint: int | None = None
 
     def register(self, name, specs) -> str:
         if self.cloud:
@@ -174,15 +174,17 @@ class Client:
         if self.cloud:
             r = self.s.get(f"{self.base}/api/agent/next",
                            params={"worker_id": self.worker_id, "has_gpu": g, "mode": mode,
-                                   "runtimes": ",".join(runtimes)}, timeout=15)
+                                   "runtimes": ",".join(runtimes) or "none"}, timeout=15)
             if r.status_code == 404:
                 raise ReRegister()
         else:
             r = self.s.get(f"{self.base}/api/workers/{self.worker_id}/next",
                            params={"has_gpu": g}, timeout=15)
-        return r.json().get("job")
+        data = r.json()
+        self.poll_hint = data.get("poll")  # server: "work is waiting, ask again in N s"
+        return data.get("job")
 
-    def progress(self, job_id, mode, episodes, logs, episodes_done) -> str | None:
+    def progress(self, job_id, mode, episodes, logs, episodes_done, total=0) -> str | None:
         """Send a batch of chart points and output lines. Returns the task's status
         on the server (e.g. 'cancelled'), or None if it could not be sent."""
         if not self.cloud:  # the old LAN coordinator takes them one by one
@@ -193,7 +195,7 @@ class Client:
             return None
         r = self.s.post(f"{self.base}/api/agent/progress", timeout=20, json={
             "job_id": job_id, "worker_id": self.worker_id, "mode": mode,
-            "episodes": episodes, "logs": logs, "episodes_done": episodes_done})
+            "episodes": episodes, "logs": logs, "episodes_done": episodes_done, "total": total})
         return r.json().get("status")
 
     MAX_BUNDLE = 250 * 1024 * 1024  # never unpack an upload past this (zip-bomb guard)
@@ -291,6 +293,7 @@ class Reporter:
         self.skipped_logs = 0
         self.latest: dict | None = None
         self.done = 0
+        self.total = 0  # from {"progress": {"total": N}}
         self.kept = 0
         self.stride = 1
         self.status: str | None = None
@@ -307,6 +310,9 @@ class Reporter:
                 self.kept += 1
                 if self.kept >= 2000 - 1000 / self.stride:
                     self.stride *= 2
+
+    def set_total(self, n):
+        self.total = max(0, int(n))
 
     def log(self, line):
         with self.lock:
@@ -325,7 +331,7 @@ class Reporter:
             self.episodes, self.logs, self.skipped_logs, done = [], [], 0, self.done
         send, later = eps[:300], eps[300:]  # the server takes 300 per update
         try:
-            status = self.client.progress(self.job_id, self.mode_fn(), send, logs, done)
+            status = self.client.progress(self.job_id, self.mode_fn(), send, logs, done, self.total)
             if status:
                 self.status = status
         except (requests.RequestException, ValueError):
@@ -407,7 +413,7 @@ def run_agent(cfg: dict, stop_event=None, on_status=None, on_info=None) -> None:
 
     specs = detect_specs()
     has_gpu = specs["has_gpu"]
-    runtimes = specs["runtimes"] or ["python"]
+    runtimes = specs["runtimes"]  # may be empty: then this PC takes no tasks
     client = Client(cfg["coordinator"], cfg.get("token"))
 
     def connect():
@@ -436,6 +442,8 @@ def run_agent(cfg: dict, stop_event=None, on_status=None, on_info=None) -> None:
             mode = idle.get_mode(cfg)
             now = time.monotonic()
             interval = SLOW_POLL if now - quiet_since > SLOW_AFTER else IDLE_POLL
+            if client.poll_hint:  # tasks are waiting: check back sooner
+                interval = max(2, min(interval, int(client.poll_hint)))
             if now - last_poll >= interval or mode != last_mode:
                 last_poll, last_mode = now, mode
                 job = None
@@ -504,7 +512,7 @@ def _run_job(client: Client, job: dict, cfg, mode, stop_event=None, status=None)
     result, error = run_job(
         job,
         on_episode=reporter.episode,
-        on_log=reporter.log,
+        on_log=reporter.log, on_total=reporter.set_total,
         should_stop=should_stop, mode=mode,
         resume_from=job.get("episodes_done", 0),
     )

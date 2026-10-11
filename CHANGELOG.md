@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.4.0
+
+- **Finds Python reliably.** Looks in PATH, the `py` launcher, the Windows registry and the usual install
+  folders, and never uses the Microsoft Store placeholder. A PC without Python no longer accepts Python
+  tasks; the dashboard tells you to install it.
+- **Smarter task placement.** Tasks go to the best idle machine: nobody at the keyboard first, the machine
+  idle longest next (so one PC no longer takes every task), GPU machines kept free while GPU work is
+  waiting. Tasks can require minimum RAM or CPU threads, or prefer the most powerful machine.
+- **Run on every machine,** or pin a task to one machine.
+- **Any kind of task,** not just reinforcement learning: report `{"progress": {"step", "value", "total"}}`
+  for a chart and progress bar. The RL `{"episode": ...}` format still works.
+- **API for AI assistants and scripts:** create an API key in the dashboard and let an assistant start
+  tasks for you. Guide: https://harvest.codevexx.com/api.txt
+
 ## v0.3.1
 
 - Safer file handling: a PC refuses to unpack an upload that would expand past 250 MB, and output

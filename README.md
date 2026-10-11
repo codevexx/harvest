@@ -7,7 +7,8 @@
 **Put your idle PCs to work.**
 
 Harvest runs your Python, Node.js and website-bot tasks on the computers you already own,<br>
-while they sit idle, and steps aside the moment you start a game.
+while they sit idle, and steps aside the moment you start a game. Built for anything from data jobs<br>
+to reinforcement learning, and usable by your AI assistant through an API.
 
 [![Latest release](https://img.shields.io/github/v/release/codevexx/harvest?label=release&color=0b57d0)](https://github.com/codevexx/harvest/releases/latest)
 [![Build](https://img.shields.io/github/actions/workflow/status/codevexx/harvest/build-windows.yml?label=windows%20build)](https://github.com/codevexx/harvest/actions/workflows/build-windows.yml)
@@ -35,7 +36,10 @@ them into one private compute farm you control from the browser:
 - **Game-aware.** Launch a game (or anything fullscreen) and the task stops instantly, keeps its checkpoint,
   and resumes later.
 - **Bring any code.** Upload a Python script, a whole Node.js project, or point a headless browser at a page.
-- **Smart routing.** Tasks only go to machines that can run them: NVIDIA GPU, Node.js, browser support.
+- **Smart placement.** Each task goes to the best idle machine for it (GPU, RAM, threads, who is at the
+  keyboard, who has been idle longest), or to every machine at once.
+- **AI-ready.** Create an API key and your AI assistant can start, watch and collect tasks for you
+  ([API guide](https://harvest.codevexx.com/api.txt)).
 - **One dashboard.** Every machine, the queue and live score charts, on desktop or phone.
 
 The service runs at [harvest.codevexx.com](https://harvest.codevexx.com). You never host a server or open a
@@ -86,14 +90,16 @@ start /wait "" "%LOCALAPPDATA%\Programs\Harvest\Harvest.exe" --connect YOUR_TOKE
 | **Node.js** | `node <file> [args]`, after `npm install` if there is a `package.json` | Node.js |
 | **Website bot** | opens a URL in headless Chromium and runs your JavaScript inside the page | Playwright, installed with one click from the app's settings |
 
-Upload a single file or a whole folder (up to 50 MB). Anything a task saves in its `outputs/` folder
+Upload a single file or a whole folder (up to 50 MB). Nothing in your code has to change. Anything a task saves in its `outputs/` folder
 (path in `HARVEST_OUTPUTS`) is zipped and can be downloaded from the dashboard when it finishes. Each
 account has 100 MB of storage for uploads and outputs, kept for 30 days.
-To get a live chart, print one JSON line per episode:
+For a live chart and progress bar, print one JSON line per step:
 
 ```python
-print(json.dumps({"episode": {"index": i, "reward": score}}), flush=True)
+print(json.dumps({"progress": {"step": i, "value": loss, "total": n}}), flush=True)
 ```
+
+Reinforcement learning code can report `{"episode": {"index": i, "reward": r}}` instead.
 
 Website bots return their score instead:
 

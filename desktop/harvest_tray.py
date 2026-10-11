@@ -314,6 +314,10 @@ class App:
         w.update(installing=True, error=None, log="Installing Playwright")
         self.push()
         py = _python_exe()
+        if not py:
+            w.update(installing=False, error="Install Python 3.11+ first (python.org), then try again")
+            self.push()
+            return
         steps = [([py, "-m", "pip", "install", "--upgrade", "playwright"], "Installing Playwright"),
                  ([py, "-m", "playwright", "install", "chromium"], "Downloading Chrome")]
         try:
