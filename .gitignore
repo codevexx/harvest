@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Local coordinator / worker artifacts
+farm.db
+best_policy.npy
+.farm_work/
+
+# Node / Cloudflare (site)
+node_modules/
+.wrangler/
+dist/
+
+# Secrets & local config (never commit)
+.dev.vars
+*.local
+
+# Not part of the public agent repo:
+#   site/        = the hosted service (control plane) — private, deployed to Cloudflare
+#   coordinator/ = optional self-host LAN coordinator (not used by the service)
+/site/
+/coordinator/
+/scripts/start_coordinator.ps1
+/scripts/submit.py
+
+# OS / editor
+.DS_Store
