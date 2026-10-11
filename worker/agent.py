@@ -16,12 +16,15 @@ import argparse
 import gzip
 import json
 import platform
+import re
 import subprocess
 import threading
 import time
 from pathlib import Path
 
 import requests
+
+ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 
 try:
     import psutil
@@ -311,7 +314,7 @@ class Reporter:
 
     def log(self, line):
         with self.lock:
-            self.logs.append(str(line)[:2000])
+            self.logs.append(ANSI.sub("", str(line))[:2000])  # drop terminal colour codes
             if len(self.logs) > self.MAX_LOGS:
                 self.logs.pop(0)
                 self.skipped_logs += 1

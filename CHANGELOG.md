@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.5.1
+
+- Tasks get their "Expected steps" value in `HARVEST_STEPS`, so a script can loop the number of times you set in the dashboard.
+- Terminal colour codes are removed from task output.
+
 ## v0.5.0
 
 - **Sets itself up.** If a PC has no Python or Node.js, Harvest downloads its own private copies (official

@@ -341,6 +341,7 @@ def run_job(
         env = os.environ.copy()
         env["RESUME_FROM"] = str(resume_from)
         env["HARVEST_OUTPUTS"] = str(work / "outputs")
+        env["HARVEST_STEPS"] = str(spec.get("episodes_total") or "")  # "Expected steps" from the task
         # In "light" mode the user is at the machine: keep CPU use modest.
         cpu_budget = "2" if mode == "light" else "0"  # 0 => let the job decide
         env["FARM_CPU_BUDGET"] = cpu_budget
