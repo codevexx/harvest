@@ -4,6 +4,7 @@ Modes:
     full   - nobody at the keyboard (or overnight window): run everything
     light  - someone is using the PC lightly: throttle, CPU only
     paused - a game / fullscreen app is running: do no work, pause jobs
+    held   - the owner pressed Pause in the tray app: same as paused
 
 Windows is the primary target. The module still imports on macOS/Linux so
 you can develop the farm on your Mac; there idle/fullscreen detection is
@@ -81,7 +82,10 @@ def foreground_is_fullscreen() -> bool:
 # --- the one call the agent uses -----------------------------------------
 
 def get_mode(cfg: dict) -> str:
-    """cfg keys: idle_threshold (s), games (list[str]), pause_on_fullscreen (bool)."""
+    """cfg keys: idle_threshold (s), games (list[str]), pause_on_fullscreen (bool),
+    user_paused (bool, set from the tray app's Pause button)."""
+    if cfg.get("user_paused"):
+        return "held"  # like paused, but shown as "paused by you"
     games = running_games(cfg.get("games", []))
     if games:
         return "paused"

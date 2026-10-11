@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Setup guide
+    url: https://harvest.codevexx.com/setup
+    about: Installing the app and connecting a machine
+  - name: Report a security issue
+    url: https://github.com/codevexx/harvest/security/advisories/new
+    about: Please report vulnerabilities privately

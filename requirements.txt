@@ -2,9 +2,8 @@
 requests==2.32.3
 psutil==6.1.1
 
-# Needed for the CartPole example and most reinforcement-learning tasks.
-# Install the right torch build separately only if your tasks need a GPU:
-#   NVIDIA:  pip install torch --index-url https://download.pytorch.org/whl/cu124
-#   AMD on Windows:  pip install torch   (CPU build; ROCm has no Windows support)
-gymnasium==1.0.0
-numpy==2.2.1
+# Optional, only for website-bot tasks:
+#   pip install playwright && python -m playwright install chromium
+# Install whatever your own Python tasks import (numpy, torch, ...) separately.
+# For an NVIDIA GPU use the CUDA build of torch:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu124

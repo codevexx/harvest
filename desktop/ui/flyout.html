@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Harvest</title>
+<style>
+  :root{
+    --font:"Segoe UI Variable Text","Segoe UI","Google Sans Flex",system-ui,-apple-system,sans-serif;
+    --bg:#f8fafd; --surface:#ffffff; --sc:#f0f4f9; --sc-high:#e9eef6; --sc-highest:#dde3ea;
+    --on:#1f1f1f; --on-var:#444746; --outline:#747775; --outline-var:#c4c7c5;
+    --primary:#0b57d0; --on-primary:#fff; --pc:#d3e3fd; --on-pc:#041e49; --sec-c:#c2e7ff; --on-sec-c:#001d35;
+    --ok:#146c2e; --ok-c:#c4eed0; --on-ok-c:#072711;
+    --warn-c:#ffdf99; --on-warn-c:#2b1700; --err:#b3261e; --err-c:#f9dedc; --on-err-c:#410e0b;
+    --neutral-c:#e3e3e3;
+  }
+  @media (prefers-color-scheme:dark){:root{
+    --bg:#131314; --surface:#1e1f20; --sc:#1e1f20; --sc-high:#282a2c; --sc-highest:#333537;
+    --on:#e3e3e3; --on-var:#c4c7c5; --outline:#8e918f; --outline-var:#444746;
+    --primary:#a8c7fa; --on-primary:#062e6f; --pc:#0842a0; --on-pc:#d3e3fd; --sec-c:#004a77; --on-sec-c:#c2e7ff;
+    --ok:#6dd58c; --ok-c:#0f5223; --on-ok-c:#c4eed0;
+    --warn-c:#5c3c00; --on-warn-c:#ffdf99; --err:#f2b8b5; --err-c:#8c1d18; --on-err-c:#f9dedc;
+    --neutral-c:#333537;
+  }}
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;overflow:hidden}
+  body{background:var(--bg);color:var(--on);font-family:var(--font);font-size:14px;line-height:20px;-webkit-font-smoothing:antialiased;user-select:none;cursor:default}
+  button,input,textarea{font:inherit;color:inherit}
+  input,textarea{user-select:text}
+  .hide{display:none!important}
+  svg.i{width:20px;height:20px;fill:currentColor;flex:none}
+  .view{position:absolute;inset:0;display:flex;flex-direction:column}
+
+  .top{display:flex;align-items:center;gap:8px;height:52px;padding:0 8px 0 16px;flex:none}
+  .top .b{display:flex;align-items:center;gap:8px;font-size:16px;font-weight:600;flex:1}
+  .ibtn{width:36px;height:36px;border-radius:50%;border:0;background:transparent;display:grid;place-items:center;cursor:pointer;color:var(--on-var)}
+  .ibtn:hover{background:color-mix(in srgb,var(--on) 8%,transparent)}
+  .body{flex:1;overflow:auto;padding:4px 16px 12px}
+
+  .hero{background:var(--surface);border-radius:20px;padding:20px 18px;display:flex;align-items:center;gap:16px}
+  .ring{width:52px;height:52px;border-radius:50%;display:grid;place-items:center;flex:none;position:relative}
+  .ring svg.i{width:26px;height:26px}
+  .ring.pulse::after{content:"";position:absolute;inset:-4px;border-radius:50%;border:2px solid currentColor;opacity:.35;animation:pulse 2s ease-out infinite}
+  @keyframes pulse{0%{transform:scale(.9);opacity:.5}100%{transform:scale(1.15);opacity:0}}
+  .c-ok{background:var(--ok-c);color:var(--on-ok-c)} .c-run{background:var(--pc);color:var(--on-pc)}
+  .c-warn{background:var(--warn-c);color:var(--on-warn-c)} .c-err{background:var(--err-c);color:var(--on-err-c)}
+  .c-off{background:var(--neutral-c);color:var(--on-var)}
+  .hero .h{font-size:18px;line-height:24px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .hero .s{color:var(--on-var);font-size:13px}
+  .hero .m{flex:1;min-width:0}
+
+  .tiles{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+  .tile{background:var(--surface);border-radius:16px;padding:10px 14px;min-width:0}
+  .tile .k{font-size:12px;color:var(--on-var)}
+  .tile .v{font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+  .acts{display:flex;gap:8px;margin-top:12px}
+  .btn{height:40px;border-radius:20px;border:0;padding:0 18px;display:inline-flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;font-weight:600;font-size:14px;flex:1;position:relative;overflow:hidden}
+  .btn::after{content:"";position:absolute;inset:0;background:currentColor;opacity:0;transition:opacity .15s}
+  .btn:hover::after{opacity:.08}
+  .btn svg.i{width:18px;height:18px}
+  .filled{background:var(--primary);color:var(--on-primary)}
+  .tonal{background:var(--sec-c);color:var(--on-sec-c)}
+  .outlined{background:transparent;border:1px solid var(--outline);color:var(--primary)}
+  .text{background:transparent;color:var(--primary);flex:none;padding:0 10px}
+  .btn[disabled]{opacity:.5;pointer-events:none}
+
+  .banner{margin-top:12px;background:var(--pc);color:var(--on-pc);border-radius:16px;padding:12px 14px;display:flex;align-items:center;gap:12px}
+  .banner .t{flex:1;font-size:13px;line-height:18px}
+  .banner .t b{display:block;font-size:14px}
+  .banner .btn{flex:none;height:34px;padding:0 14px;font-size:13px;background:var(--primary);color:var(--on-primary)}
+  .bar{height:4px;border-radius:2px;background:color-mix(in srgb,var(--on-pc) 20%,transparent);margin-top:6px;overflow:hidden}
+  .bar i{display:block;height:100%;background:currentColor;border-radius:2px}
+
+  .foot{flex:none;display:flex;align-items:center;gap:4px;padding:8px 10px 10px 16px;border-top:1px solid var(--outline-var);font-size:12px;color:var(--on-var)}
+  .foot .v{flex:1}
+  .link{border:0;background:transparent;color:var(--primary);cursor:pointer;font-size:12px;font-weight:600;padding:6px 8px;border-radius:8px}
+  .link:hover{background:color-mix(in srgb,var(--on) 8%,transparent)}
+
+  /* forms */
+  .fld{margin-top:14px}
+  .fld label{display:block;font-size:12px;font-weight:600;color:var(--on-var);margin:0 0 5px 2px}
+  .inp{width:100%;height:40px;padding:0 12px;border-radius:8px;border:1px solid var(--outline);background:var(--surface)}
+  textarea.inp{height:64px;padding:8px 12px;resize:none;line-height:18px;font-size:13px}
+  .inp:focus{outline:none;border:2px solid var(--primary);padding-left:11px}
+  textarea.inp:focus{padding:7px 11px}
+  .help{font-size:12px;color:var(--on-var);margin:5px 2px 0;line-height:16px}
+  .err{color:var(--err);font-size:12.5px;margin-top:8px}
+  .group{background:var(--surface);border-radius:16px;padding:4px 14px;margin-top:14px}
+  .row{display:flex;align-items:center;gap:12px;padding:10px 0}
+  .row+.row{border-top:1px solid var(--outline-var)}
+  .row .l{flex:1;min-width:0} .row .l .a{font-size:14px} .row .l .b{font-size:12px;color:var(--on-var);line-height:16px}
+  .row .btn{flex:none;height:32px;padding:0 14px;font-size:13px}
+  .switch{position:relative;width:44px;height:26px;flex:none}
+  .switch input{position:absolute;opacity:0;width:100%;height:100%;margin:0;cursor:pointer;z-index:1}
+  .switch .tr{position:absolute;inset:0;border-radius:13px;background:var(--sc-highest);border:2px solid var(--outline);transition:background .15s}
+  .switch .th{position:absolute;top:7px;left:7px;width:12px;height:12px;border-radius:50%;background:var(--outline);transition:all .15s}
+  .switch input:checked~.tr{background:var(--primary);border-color:var(--primary)}
+  .switch input:checked~.th{left:21px;top:4px;width:18px;height:18px;background:var(--on-primary)}
+  details{margin-top:14px}
+  summary{cursor:pointer;color:var(--primary);font-weight:600;font-size:13px;padding:4px 2px}
+  .steps{display:flex;flex-direction:column;gap:14px;margin-top:6px}
+  .st{display:flex;gap:12px}
+  .st .n{width:24px;height:24px;border-radius:50%;background:var(--pc);color:var(--on-pc);display:grid;place-items:center;font-size:12px;font-weight:700;flex:none}
+  .st .x{flex:1;min-width:0}
+  .welcome{text-align:center;padding:8px 8px 4px}
+  .welcome h1{font-size:22px;line-height:28px;font-weight:600;margin:10px 0 4px}
+  .welcome p{color:var(--on-var);font-size:13px}
+</style>
+</head>
+<body>
+
+<svg style="display:none" aria-hidden="true">
+  <symbol id="leaf" viewBox="0 0 24 24"><path d="M12 22C7 17 4 13 4 8a8 8 0 0 1 16 0c0 5-3 9-8 14Z" fill="#f0a53b"/></symbol>
+  <symbol id="gear" viewBox="0 0 24 24"><path d="M19.4 13a7.6 7.6 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.4 7.4 0 0 0-1.7-1L15 3h-4l-.4 2.7a7.4 7.4 0 0 0-1.7 1l-2.5-1-2 3.5L6.6 11a7.6 7.6 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1a7.4 7.4 0 0 0 1.7 1L11 21h4l.4-2.7a7.4 7.4 0 0 0 1.7-1l2.5 1 2-3.5ZM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Z"/></symbol>
+  <symbol id="back" viewBox="0 0 24 24"><path d="M20 11H7.8l5.6-5.6L12 4l-8 8 8 8 1.4-1.4L7.8 13H20z"/></symbol>
+  <symbol id="play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></symbol>
+  <symbol id="pause" viewBox="0 0 24 24"><path d="M6 19h4V5H6zm8-14v14h4V5z"/></symbol>
+  <symbol id="check" viewBox="0 0 24 24"><path d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z"/></symbol>
+  <symbol id="game" viewBox="0 0 24 24"><path d="M21 6H3a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h18a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2Zm-10 7H8v3H6v-3H3v-2h3V8h2v3h3Zm4.5 2a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Zm4-3a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Z"/></symbol>
+  <symbol id="cloud" viewBox="0 0 24 24"><path d="M19.4 10A7.5 7.5 0 0 0 5.3 8 6 6 0 0 0 6 20h13a5 5 0 0 0 .4-10Z"/></symbol>
+  <symbol id="open" viewBox="0 0 24 24"><path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7h-2zM14 3v2h3.6l-9.8 9.8 1.4 1.4L19 6.4V10h2V3z"/></symbol>
+  <symbol id="spark" viewBox="0 0 24 24"><path d="M7 2v11h3v9l7-12h-4l4-8z"/></symbol>
+</svg>
+
+<!-- FIRST RUN -->
+<section class="view hide" id="v-setup">
+  <div class="top"><div class="b"><svg class="i"><use href="#leaf"/></svg>Harvest</div></div>
+  <div class="body">
+    <div class="welcome"><svg class="i" style="width:44px;height:44px"><use href="#leaf"/></svg><h1>Connect this PC</h1><p>It will run your tasks while you are away and step aside when you play.</p></div>
+    <div class="steps" style="margin-top:18px">
+      <div class="st"><span class="n">1</span><div class="x"><div style="font-weight:600">Get a connect token</div><div class="help" style="margin:2px 0 8px">Sign in to your dashboard and choose Connect a machine.</div>
+        <button class="btn tonal" style="flex:none" onclick="call('open_dashboard')"><svg class="i"><use href="#open"/></svg>Open dashboard</button></div></div>
+      <div class="st"><span class="n">2</span><div class="x"><div style="font-weight:600">Paste it here</div>
+        <div class="fld" style="margin-top:8px"><label for="s-token">Connect token</label><input class="inp" id="s-token" placeholder="hv_..." spellcheck="false"></div>
+        <div class="fld"><label for="s-name">Name for this PC</label><input class="inp" id="s-name"></div></div></div>
+    </div>
+    <div class="err" id="s-err"></div>
+  </div>
+  <div class="foot"><span class="v" id="s-ver"></span><button class="btn filled" style="flex:none" onclick="connect()">Connect</button></div>
+</section>
+
+<!-- HOME -->
+<section class="view hide" id="v-home">
+  <div class="top"><div class="b"><svg class="i"><use href="#leaf"/></svg>Harvest</div>
+    <button class="ibtn" title="Settings" onclick="openSettings()"><svg class="i"><use href="#gear"/></svg></button></div>
+  <div class="body">
+    <div class="hero"><div class="ring" id="ring"><svg class="i"><use id="ringIcon" href="#check"/></svg></div>
+      <div class="m"><div class="h" id="headline">Starting</div><div class="s" id="subline"></div></div></div>
+    <div class="tiles">
+      <div class="tile"><div class="k">This PC</div><div class="v" id="t-name"></div></div>
+      <div class="tile"><div class="k">Farm</div><div class="v" id="t-farm"></div></div>
+      <div class="tile"><div class="k">Finished</div><div class="v" id="t-done"></div></div>
+      <div class="tile"><div class="k">Can run</div><div class="v" id="t-rt"></div></div>
+    </div>
+    <div class="acts">
+      <button class="btn tonal" id="pauseBtn" onclick="togglePause()"></button>
+      <button class="btn outlined" onclick="call('open_dashboard')"><svg class="i"><use href="#open"/></svg>Dashboard</button>
+    </div>
+    <div class="banner hide" id="upd"></div>
+  </div>
+  <div class="foot"><span class="v" id="ver"></span><button class="link" id="chk" onclick="call('check_updates')">Check for updates</button><button class="link" onclick="call('quit')">Quit</button></div>
+</section>
+
+<!-- SETTINGS -->
+<section class="view hide" id="v-settings">
+  <div class="top"><button class="ibtn" title="Back" onclick="show('home')"><svg class="i"><use href="#back"/></svg></button><div class="b">Settings</div></div>
+  <div class="body">
+    <div class="fld" style="margin-top:4px"><label for="f-token">Connect token</label><input class="inp" id="f-token" type="password" placeholder="Paste a new token to change farms" spellcheck="false">
+      <p class="help">Connected. Leave empty to keep the current token.</p></div>
+    <div class="fld"><label for="f-name">Name for this PC</label><input class="inp" id="f-name"></div>
+    <div class="fld"><label for="f-games">Always pause for these programs</label><textarea class="inp" id="f-games" placeholder="valorant.exe, cs2.exe" spellcheck="false"></textarea>
+      <p class="help">Harvest already pauses for any fullscreen app. Add games that run windowed.</p></div>
+
+    <div class="group">
+      <div class="row"><div class="l"><div class="a">Start with Windows</div><div class="b">Runs quietly in the tray after you sign in</div></div>
+        <label class="switch"><input type="checkbox" id="f-autostart"><span class="tr"></span><span class="th"></span></label></div>
+      <div class="row"><div class="l"><div class="a">Update automatically</div><div class="b">Installs new versions when no task is running</div></div>
+        <label class="switch"><input type="checkbox" id="f-autoupdate"><span class="tr"></span><span class="th"></span></label></div>
+      <div class="row"><div class="l"><div class="a">Website tasks</div><div class="b" id="webStatus"></div></div>
+        <button class="btn tonal" id="webBtn" onclick="call('setup_website_tasks')">Set up</button></div>
+    </div>
+
+    <details><summary>Advanced</summary>
+      <div class="fld"><label for="f-server">Server</label><input class="inp" id="f-server" spellcheck="false"></div>
+      <div class="fld"><label for="f-idle">Idle after (minutes without input)</label><input class="inp" id="f-idle" type="number" min="1" max="240"></div>
+    </details>
+    <div class="err" id="f-err"></div>
+  </div>
+  <div class="foot"><span class="v"></span><button class="btn text" onclick="show('home')">Cancel</button><button class="btn filled" style="flex:none" onclick="save()">Save</button></div>
+</section>
+
+<script>
+var S = null, view = null;
+var $ = function (s) { return document.querySelector(s); };
+var RT = { python: "Python", node: "Node", browser: "Web" };
+
+function call(name) {
+  var args = [].slice.call(arguments, 1);
+  if (!window.pywebview) return Promise.resolve(null);
+  return window.pywebview.api[name].apply(null, args);
+}
+function show(v) {
+  view = v;
+  ["setup", "home", "settings"].forEach(function (x) { $("#v-" + x).classList.toggle("hide", x !== v); });
+}
+function setIcon(id, cls, pulse) {
+  var r = $("#ring"); r.className = "ring " + cls + (pulse ? " pulse" : "");
+  $("#ringIcon").setAttribute("href", "#" + id);
+}
+
+// Called from Python whenever anything changes.
+window.hv = {
+  update: function (s) {
+    S = s;
+    if (!view || (view === "setup" && s.connected)) show(s.connected ? "home" : "setup");
+    $("#ver").textContent = "Version " + s.version;
+    $("#s-ver").textContent = "Version " + s.version;
+    if (!$("#s-name").value) $("#s-name").value = s.name;
+    renderHome(s);
+    renderWeb(s.website || {});
+  },
+};
+
+function renderHome(s) {
+  var st = s.status || {}, h, sub;
+  if (s.user_paused) { setIcon("pause", "c-warn"); h = "Paused by you"; sub = "No new tasks start until you resume"; }
+  else if (st.mode === "offline") { setIcon("cloud", "c-off"); h = "Connecting"; sub = st.detail && st.detail.indexOf("error") === 0 ? st.detail : "Trying to reach " + s.server_host; }
+  else if (st.mode === "paused") { setIcon("game", "c-err"); h = "Paused for your game"; sub = "Tasks pick up again when you are done"; }
+  else if (st.state === "busy") { setIcon("spark", "c-run", true); h = "Running " + (st.detail || "a task"); sub = st.mode === "light" ? "Light mode while you use the PC" : "Full power while you are away"; }
+  else { setIcon("check", "c-ok"); h = "Ready for tasks"; sub = st.mode === "light" ? "You are using the PC, so tasks run light" : "Idle, tasks run at full power"; }
+  $("#headline").textContent = h; $("#headline").title = h; $("#subline").textContent = sub;
+  $("#t-name").textContent = s.name; $("#t-farm").textContent = s.farm || "-";
+  $("#t-done").textContent = s.finished + (s.finished === 1 ? " task" : " tasks");
+  $("#t-rt").textContent = (s.runtimes || []).map(function (r) { return RT[r] || r; }).join(", ") || "-";
+  $("#pauseBtn").innerHTML = s.user_paused ? '<svg class="i"><use href="#play"/></svg>Resume' : '<svg class="i"><use href="#pause"/></svg>Pause';
+
+  var u = s.update || {}, b = $("#upd");
+  $("#chk").textContent = u.checking ? "Checking" : "Check for updates";
+  $("#chk").disabled = !!u.checking;
+  if (u.ready) {
+    b.innerHTML = '<div class="t"><b>Version ' + esc(u.available) + ' is ready</b>' + (s.status && s.status.state === "busy" ? "Installs when the current task ends" : "Restart Harvest to finish updating") + '</div><button class="btn" onclick="call(\'apply_update\')">Restart</button>';
+  } else if (u.downloading) {
+    b.innerHTML = '<div class="t"><b>Downloading version ' + esc(u.available) + '</b><div class="bar"><i style="width:' + Math.round((u.progress || 0) * 100) + '%"></i></div></div>';
+  } else if (u.available && !u.can_self_update) {
+    b.innerHTML = '<div class="t"><b>Version ' + esc(u.available) + ' is available</b>Download it from the website</div><button class="btn" onclick="call(\'open_download\')">Get it</button>';
+  } else if (u.available) {
+    b.innerHTML = '<div class="t"><b>Version ' + esc(u.available) + ' is available</b>' + (u.error ? esc(u.error) : "") + '</div><button class="btn" onclick="call(\'download_update\')">Download</button>';
+  } else if (u.message) {
+    b.innerHTML = '<div class="t">' + esc(u.message) + '</div>';
+  } else { b.innerHTML = ""; }
+  b.classList.toggle("hide", !b.innerHTML);
+}
+function renderWeb(w) {
+  var btn = $("#webBtn");
+  if (w.installing) { $("#webStatus").textContent = w.log || "Installing"; btn.disabled = true; btn.textContent = "Installing"; }
+  else if (w.ready) { $("#webStatus").textContent = "Ready. This PC can run website bots."; btn.classList.add("hide"); }
+  else { $("#webStatus").textContent = w.error || "Installs Playwright and Chrome (about 150 MB)"; btn.disabled = false; btn.textContent = "Set up"; btn.classList.remove("hide"); }
+}
+function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
+
+function openSettings() {
+  $("#f-token").value = ""; $("#f-name").value = S.name; $("#f-games").value = (S.games || []).join(", ");
+  $("#f-autostart").checked = !!S.autostart; $("#f-autoupdate").checked = !!S.auto_update;
+  $("#f-server").value = S.server; $("#f-idle").value = Math.round((S.idle_threshold || 300) / 60);
+  $("#f-autostart").closest(".row").classList.toggle("hide", !S.can_autostart);
+  $("#f-err").textContent = ""; show("settings");
+}
+function save() {
+  var cfg = {
+    token: $("#f-token").value.trim(), name: $("#f-name").value.trim(),
+    games: $("#f-games").value.split(/[,\n]/).map(function (g) { return g.trim(); }).filter(Boolean),
+    autostart: $("#f-autostart").checked, auto_update: $("#f-autoupdate").checked,
+    server: $("#f-server").value.trim(), idle_minutes: parseInt($("#f-idle").value, 10) || 5,
+  };
+  call("save_settings", cfg).then(function (err) { if (err) $("#f-err").textContent = err; else show("home"); });
+}
+function connect() {
+  var t = $("#s-token").value.trim();
+  if (!/^hv_/.test(t)) { $("#s-err").textContent = "Paste the token from your dashboard. It starts with hv_"; return; }
+  call("save_settings", { token: t, name: $("#s-name").value.trim() }).then(function (err) {
+    if (err) $("#s-err").textContent = err; else show("home");
+  });
+}
+function togglePause() { call("set_paused", !S.user_paused); }
+
+window.addEventListener("blur", function () { call("on_blur"); });
+document.addEventListener("keydown", function (e) { if (e.key === "Escape") call("hide"); });
+window.addEventListener("pywebviewready", function () { call("get_state").then(function (s) { if (s) hv.update(s); }); });
+</script>
+</body>
+</html>

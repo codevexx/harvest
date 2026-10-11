@@ -2,8 +2,11 @@
 
 Job contract (simple and language-agnostic):
   * The coordinator ships the job's files inline in spec["files"]
-    as { "relative/path.py": "<file contents>", ... }.
-  * The worker writes them to a temp folder and runs spec["entry"].
+    as { "relative/path.py": "<text>" | {"b64": "<base64 bytes>"}, ... }.
+  * The worker writes them to a folder and runs spec["entry"] according to
+    spec["kind"]: "python" (python <entry>), "node" (node <entry>, after
+    npm install if there is a package.json) or "browser" (a website bot, see
+    browser_harness.py).
   * The job reports progress by printing ONE JSON object per line to stdout:
         {"episode": {"index": 0, "reward": 23.0, "steps": 23, "extra": {}}}
         {"log": "any message"}
@@ -16,6 +19,7 @@ from where it left off (the job reads RESUME_FROM to skip finished episodes).
 """
 from __future__ import annotations
 
+import base64
 import json
 import os
 import queue
@@ -25,6 +29,8 @@ import sys
 import threading
 from pathlib import Path
 from typing import Callable
+
+from .browser_harness import HARNESS
 
 def _python_exe() -> str:
     """Interpreter used to run task scripts. In a packaged build (PyInstaller)
@@ -42,11 +48,61 @@ def _python_exe() -> str:
 WORK_ROOT = Path.home() / ".farm_work"
 
 
-def _write_bundle(files: dict[str, str], dest: Path) -> None:
+def _write_bundle(files: dict, dest: Path) -> None:
+    root = dest.resolve()
     for rel, content in files.items():
-        target = dest / rel
+        target = (dest / rel).resolve()
+        # Never write outside the task folder, whatever the server sent.
+        if root != target and root not in target.parents:
+            raise ValueError(f"unsafe file path in task: {rel!r}")
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
+        if isinstance(content, dict) and "b64" in content:
+            target.write_bytes(base64.b64decode(content["b64"]))
+        else:
+            target.write_text(str(content), encoding="utf-8")
+
+
+# Task processes must not flash a console window when started from the tray app.
+NO_WINDOW = 0x08000000 if sys.platform.startswith("win") else 0  # CREATE_NO_WINDOW
+
+
+def _node_exe() -> str | None:
+    return shutil.which("node")
+
+
+def _npm_install(work: Path, on_log, env) -> None:
+    """Install a Node task's dependencies into its own folder (never global)."""
+    if not (work / "package.json").exists() or (work / "node_modules").exists():
+        return
+    npm = shutil.which("npm")
+    if not npm:
+        on_log("package.json found but npm is not installed; skipping npm install")
+        return
+    on_log("$ npm install")
+    r = subprocess.run([npm, "install", "--no-audit", "--no-fund"], cwd=work, env=env,
+                       capture_output=True, text=True, timeout=600, creationflags=NO_WINDOW)
+    for line in (r.stdout + r.stderr).splitlines()[-15:]:
+        on_log(line)
+
+
+def _command(spec: dict, work: Path, on_log, env) -> list[str]:
+    kind = spec.get("kind", "python")
+    entry = spec.get("entry", "main.py")
+    args = [str(a) for a in spec.get("args", [])]
+    if kind == "node":
+        node = _node_exe()
+        if not node:
+            raise RuntimeError("Node.js is not installed on this machine")
+        _npm_install(work, on_log, env)
+        return [node, entry, *args]
+    if kind == "browser":
+        (work / "_harvest_browser.py").write_text(HARNESS, encoding="utf-8")
+        (work / "_harvest_job.json").write_text(json.dumps({
+            "url": spec["url"], "script_file": entry, "runs": spec.get("runs", 1),
+            "timeout_s": spec.get("timeout_s", 60), "headless": spec.get("headless", True),
+        }), encoding="utf-8")
+        return [_python_exe(), "-u", "_harvest_browser.py"]
+    return [_python_exe(), "-u", entry, *args]
 
 
 def _reader(stream, q: "queue.Queue[str | None]") -> None:
@@ -66,8 +122,6 @@ def run_job(
 ) -> tuple[str, str | None]:
     """Returns (status, error): status is 'done' | 'failed' | 'interrupted'."""
     spec = job["spec"]
-    entry = spec.get("entry", "main.py")
-    args = [str(a) for a in spec.get("args", [])]
 
     work = WORK_ROOT / job["id"]
     work.mkdir(parents=True, exist_ok=True)
@@ -83,12 +137,13 @@ def run_job(
             env["OMP_NUM_THREADS"] = "2"
             env["MKL_NUM_THREADS"] = "2"
 
-        cmd = [_python_exe(), "-u", entry, *args]
+        env["PYTHONUNBUFFERED"] = "1"
+        cmd = _command(spec, work, on_log, env)
         on_log(f"$ {' '.join(cmd)}  (mode={mode}, resume_from={resume_from})")
 
-        creationflags = 0
+        creationflags = NO_WINDOW
         if sys.platform.startswith("win") and mode == "light":
-            creationflags = subprocess.BELOW_NORMAL_PRIORITY_CLASS  # type: ignore[attr-defined]
+            creationflags |= subprocess.BELOW_NORMAL_PRIORITY_CLASS  # type: ignore[attr-defined]
 
         proc = subprocess.Popen(
             cmd, cwd=work, env=env, text=True, bufsize=1,
@@ -107,7 +162,7 @@ def run_job(
                     proc.wait(timeout=5)
                 except subprocess.TimeoutExpired:
                     proc.kill()
-                on_log("paused: machine is busy, job stopped (will resume on re-queue)")
+                on_log("stopped on this machine (paused for a game, or stopped from the dashboard)")
                 return "interrupted", None  # keep work dir so the checkpoint survives
 
             try:
@@ -142,6 +197,9 @@ def run_job(
         if status == "done":
             return "done", None
         return "failed", error or f"exited with code {code}"
-    except Exception:
+    except Exception as e:
+        # A task that cannot even start (missing runtime, bad files) fails on
+        # its own instead of taking the whole agent down.
         shutil.rmtree(work, ignore_errors=True)
-        raise
+        on_log(f"could not run task: {e}")
+        return "failed", str(e)

@@ -27,7 +27,7 @@ except ImportError:
     psutil = None
 
 from . import idle
-from .runner import run_job
+from .runner import NO_WINDOW, _node_exe, _python_exe, run_job
 
 CONFIG_PATH = Path(__file__).parent / "worker.config.json"
 
@@ -47,6 +47,25 @@ def detect_gpu() -> tuple[str | None, bool]:
     return None, False
 
 
+def detect_runtimes() -> list[str]:
+    """Which task kinds this machine can run: python, node, browser."""
+    found = []
+    try:
+        subprocess.run([_python_exe(), "--version"], capture_output=True, timeout=10,
+                       check=True, creationflags=NO_WINDOW)
+        found.append("python")
+        # Website bots need Playwright in that same Python.
+        r = subprocess.run([_python_exe(), "-c", "import playwright"], capture_output=True,
+                           timeout=20, creationflags=NO_WINDOW)
+        if r.returncode == 0:
+            found.append("browser")
+    except Exception:
+        pass
+    if _node_exe():
+        found.append("node")
+    return found
+
+
 def detect_specs() -> dict:
     gpu, is_nvidia = detect_gpu()
     ram_gb = cores = None
@@ -57,6 +76,7 @@ def detect_specs() -> dict:
         "cpu": platform.processor() or platform.machine(),
         "cores": cores, "ram_gb": ram_gb, "gpu": gpu,
         "has_gpu": is_nvidia, "os": f"{platform.system()} {platform.release()}",
+        "runtimes": detect_runtimes(),
     }
 
 
@@ -83,7 +103,9 @@ class Client:
             r = self.s.post(f"{self.base}/api/workers/register",
                             json={"name": name, "specs": specs}, timeout=15)
         r.raise_for_status()
-        self.worker_id = r.json()["worker_id"]
+        data = r.json()
+        self.worker_id = data["worker_id"]
+        self.farm = data.get("farm")
         return self.worker_id
 
     def heartbeat(self, mode, status) -> None:
@@ -94,11 +116,12 @@ class Client:
             self.s.post(f"{self.base}/api/workers/{self.worker_id}/heartbeat",
                         json={"mode": mode, "status": status}, timeout=15)
 
-    def next_job(self, has_gpu) -> dict | None:
+    def next_job(self, has_gpu, runtimes=("python",)) -> dict | None:
         g = str(has_gpu).lower()
         if self.cloud:
             r = self.s.get(f"{self.base}/api/agent/next",
-                           params={"worker_id": self.worker_id, "has_gpu": g}, timeout=15)
+                           params={"worker_id": self.worker_id, "has_gpu": g,
+                                   "runtimes": ",".join(runtimes)}, timeout=15)
         else:
             r = self.s.get(f"{self.base}/api/workers/{self.worker_id}/next",
                            params={"has_gpu": g}, timeout=15)
@@ -126,6 +149,16 @@ class Client:
         else:
             self.s.post(f"{self.base}/api/jobs/{job_id}/finish",
                         json={"status": status, "error": error}, timeout=15)
+
+    def job_status(self, job_id) -> str | None:
+        """Current status on the server (cloud only), e.g. 'cancelled'."""
+        if not self.cloud:
+            return None
+        try:
+            r = self.s.get(f"{self.base}/api/agent/job", params={"job_id": job_id}, timeout=10)
+            return r.json().get("status")
+        except (requests.RequestException, ValueError):
+            return None
 
     def requeue(self, job_id):
         if self.cloud:
@@ -167,11 +200,12 @@ def load_config() -> dict:
 
 # --- main loop -----------------------------------------------------------
 
-def run_agent(cfg: dict, stop_event=None, on_status=None) -> None:
+def run_agent(cfg: dict, stop_event=None, on_status=None, on_info=None) -> None:
     """Connect to Harvest and process work until stop_event is set.
 
     Shared by the CLI (main) and the desktop tray app. on_status(mode, state,
     detail) is called on changes so a UI can show idle/running/paused/offline.
+    on_info({"farm", "runtimes"}) is called once connected.
     """
     def status(mode, state, detail=None):
         if on_status:
@@ -188,6 +222,7 @@ def run_agent(cfg: dict, stop_event=None, on_status=None) -> None:
 
     specs = detect_specs()
     has_gpu = specs["has_gpu"]
+    runtimes = specs["runtimes"] or ["python"]
     client = Client(cfg["coordinator"], cfg.get("token"))
 
     # Register, retrying until connected (or stopped).
@@ -200,12 +235,14 @@ def run_agent(cfg: dict, stop_event=None, on_status=None) -> None:
             wait(5)
     if stopped():
         return
+    if on_info:
+        on_info({"farm": getattr(client, "farm", None), "runtimes": runtimes})
     status("full", "idle", None)
 
     while not stopped():
         try:
             mode = idle.get_mode(cfg)
-            if not _run_available_job(client, has_gpu, cfg, mode, stop_event, status):
+            if not _run_available_job(client, has_gpu, runtimes, cfg, mode, stop_event, status):
                 client.heartbeat(mode, "idle")
                 status(mode, "idle", None)
                 wait(cfg.get("poll_interval", 3))
@@ -214,6 +251,9 @@ def run_agent(cfg: dict, stop_event=None, on_status=None) -> None:
             wait(5)
         except KeyboardInterrupt:
             break
+        except Exception as e:  # never let one bad response kill the agent
+            status("offline", "idle", f"error: {e}")
+            wait(5)
 
 
 def main() -> None:
@@ -230,12 +270,12 @@ def main() -> None:
         print("\nstopping worker")
 
 
-def _run_available_job(client: Client, has_gpu, cfg, mode, stop_event=None, status=None) -> bool:
-    if mode == "paused":
+def _run_available_job(client: Client, has_gpu, runtimes, cfg, mode, stop_event=None, status=None) -> bool:
+    if mode in ("paused", "held"):
         return False
 
     client.heartbeat(mode, "idle")
-    job = client.next_job(has_gpu)
+    job = client.next_job(has_gpu, runtimes)
     if not job:
         return False
 
@@ -244,10 +284,17 @@ def _run_available_job(client: Client, has_gpu, cfg, mode, stop_event=None, stat
         status(mode, "busy", job.get("name"))
     client.heartbeat(mode, "busy")
 
+    cancelled = False
+    last_check = time.monotonic()
+
     def should_stop():
+        nonlocal cancelled, last_check
         if stop_event and stop_event.is_set():
             return True
-        return idle.get_mode(cfg) == "paused"
+        if time.monotonic() - last_check > 10:  # was it stopped from the dashboard?
+            last_check = time.monotonic()
+            cancelled = client.job_status(job_id) == "cancelled"
+        return cancelled or idle.get_mode(cfg) in ("paused", "held")
 
     result, error = run_job(
         job,
@@ -257,7 +304,9 @@ def _run_available_job(client: Client, has_gpu, cfg, mode, stop_event=None, stat
         resume_from=job.get("episodes_done", 0),
     )
 
-    if result == "interrupted":
+    if cancelled:
+        client.finish(job_id, "cancelled", None)  # frees this machine; status stays cancelled
+    elif result == "interrupted":
         client.requeue(job_id)
     else:
         client.finish(job_id, result, error)

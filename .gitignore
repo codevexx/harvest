@@ -29,3 +29,9 @@ dist/
 
 # OS / editor
 .DS_Store
+
+# Local tooling and private notes (graphify-out also indexes the private site/)
+/.claude/
+/CLAUDE.md
+/graphify-out/
+/.graphifyignore

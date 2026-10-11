@@ -1,75 +1,160 @@
-# Harvest — worker agent
+<div align="center">
 
-[Harvest](https://harvest.codevexx.com) is a service that puts the PCs you
-already own to work. You sign in, connect your machines, and start tasks (such
-as reinforcement-learning training) from the dashboard. Each machine runs tasks
-while it is idle and **pauses the moment you start a game**.
+<img src="docs/logo.svg" width="72" alt="Harvest logo">
 
-This repository is the **worker agent** — the small program you install on each
-PC to connect it to your Harvest account. The service itself is hosted at
-harvest.codevexx.com; you don't run any server yourself.
+# Harvest
 
-## Install
+**Put your idle PCs to work.**
 
-On each PC, install [Python 3.11+](https://www.python.org/downloads/), then:
+Harvest runs your Python, Node.js and website-bot tasks on the computers you already own,<br>
+while they sit idle, and steps aside the moment you start a game.
+
+[![Latest release](https://img.shields.io/github/v/release/codevexx/harvest?label=release&color=0b57d0)](https://github.com/codevexx/harvest/releases/latest)
+[![Build](https://img.shields.io/github/actions/workflow/status/codevexx/harvest/build-windows.yml?label=windows%20build)](https://github.com/codevexx/harvest/actions/workflows/build-windows.yml)
+![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0b57d0)
+![Python](https://img.shields.io/badge/python-3.11%2B-3776ab)
+
+[**Download for Windows**](https://github.com/codevexx/harvest/releases/latest/download/Harvest-Setup.exe) &nbsp;·&nbsp;
+[Dashboard](https://harvest.codevexx.com/app) &nbsp;·&nbsp;
+[Setup guide](https://harvest.codevexx.com/setup) &nbsp;·&nbsp;
+[Bring your code](https://harvest.codevexx.com/compat)
+
+<br>
+
+<img src="docs/images/dashboard-light.png" alt="The Harvest dashboard: machines, running tasks and their progress" width="900">
+
+</div>
+
+## Why Harvest
+
+You probably have a gaming PC, an old workstation or a laptop that sits idle most of the day. Harvest turns
+them into one private compute farm you control from the browser:
+
+- **Idle-aware.** Full power when nobody is at the keyboard, a gentle two-thread mode while you work.
+- **Game-aware.** Launch a game (or anything fullscreen) and the task stops instantly, keeps its checkpoint,
+  and resumes later.
+- **Bring any code.** Upload a Python script, a whole Node.js project, or point a headless browser at a page.
+- **Smart routing.** Tasks only go to machines that can run them: NVIDIA GPU, Node.js, browser support.
+- **One dashboard.** Every machine, the queue and live score charts, on desktop or phone.
+
+The service runs at [harvest.codevexx.com](https://harvest.codevexx.com). You never host a server or open a
+port: each PC connects out to Harvest with a private token. This repository is the open-source part that runs
+on your machines: the Windows app and the worker agent inside it.
+
+## The Windows app
+
+<img align="right" src="docs/images/tray-flyout-light.png" width="380" alt="The Harvest panel above the Windows taskbar">
+
+Harvest lives by the clock. Click the leaf and a panel opens above the taskbar, like the Wi-Fi or volume
+panels, showing:
+
+- what the PC is doing right now, and why
+- a **Pause** button for when you need every core
+- settings for start-with-Windows, games to always pause for, and website-task support
+
+It **updates itself** from this repository's releases, and checks every download against the SHA-256
+published with it before installing.
+
+### Install
+
+1. Download **[Harvest-Setup.exe](https://github.com/codevexx/harvest/releases/latest/download/Harvest-Setup.exe)**
+   and run it. No admin rights needed.
+2. Sign in at [harvest.codevexx.com](https://harvest.codevexx.com/app) with Google, open **Machines**, choose
+   **Connect a machine** and copy the token.
+3. Click the Harvest icon by the clock, paste the token, press **Connect**.
+
+<br clear="right">
+
+> [!NOTE]
+> The installer is not code-signed yet, so Windows SmartScreen may show "Windows protected your PC".
+> Choose **More info**, then **Run anyway**.
+
+## What you can run
+
+| Kind | How it runs | Needs on the PC |
+|------|-------------|-----------------|
+| **Python** | `python <file> [args]` in its own task folder | Python 3.11+ and the packages your code imports |
+| **Node.js** | `node <file> [args]`, after `npm install` if there is a `package.json` | Node.js |
+| **Website bot** | opens a URL in headless Chromium and runs your JavaScript inside the page | Playwright, installed with one click from the app's settings |
+
+Upload a single file or a whole folder (up to 1.5 MB). To get a live chart, print one JSON line per episode:
+
+```python
+print(json.dumps({"episode": {"index": i, "reward": score}}), flush=True)
+```
+
+Website bots return their score instead:
+
+```js
+const items = document.querySelectorAll(".result");
+harvest.log(`found ${items.length}`);
+return { reward: items.length };
+```
+
+The full contract, including resuming after a pause, is in the
+[compatibility guide](https://harvest.codevexx.com/compat).
+
+<p align="center"><img src="docs/images/task-detail.png" alt="A task's live score chart and output" width="900"></p>
+
+## How it works
+
+```mermaid
+flowchart LR
+    You([You, in the browser]) -- start tasks --> Cloud[harvest.codevexx.com<br>dashboard + queue]
+    subgraph Your PCs
+      A[xeon-pc<br>Harvest app]
+      B[gaming-rig<br>Harvest app]
+      C[laptop<br>Harvest app]
+    end
+    A -- token, outbound HTTPS --> Cloud
+    B -- token, outbound HTTPS --> Cloud
+    C -- token, outbound HTTPS --> Cloud
+```
+
+Each agent decides every few seconds whether its machine is free:
+
+| Mode | When | What happens |
+|------|------|--------------|
+| `full` | no keyboard or mouse input for a while | tasks run at full power |
+| `light` | you are using the PC | two threads, below-normal priority |
+| `paused` | a game or fullscreen app is in front | the task stops and is re-queued with its checkpoint |
+| `held` | you pressed **Pause** in the app | no new tasks until you resume |
+
+Your code and data run only on your machines. The service stores your account, the queue, task files you
+upload, and the progress your tasks report.
+
+## Run from source (macOS, Linux, Windows)
 
 ```bash
 git clone https://github.com/codevexx/harvest
 cd harvest
-python -m venv .venv
-# Windows:  .\.venv\Scripts\Activate.ps1
-# macOS/Linux:  source .venv/bin/activate
-pip install requests psutil gymnasium numpy
-```
-
-Only install PyTorch if your tasks need it. On an NVIDIA machine use the CUDA
-build (`pip install torch --index-url https://download.pytorch.org/whl/cu124`);
-on an AMD GPU on Windows use the CPU build (`pip install torch`).
-
-## Connect
-
-1. Sign in at <https://harvest.codevexx.com/app> and create a farm.
-2. Click **Connect a machine** and copy the connect token (shown once).
-3. Run the agent on the PC:
-
-```bash
+python -m venv .venv && source .venv/bin/activate   # Windows: .\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
 python -m worker.agent --coordinator https://harvest.codevexx.com --token YOUR_TOKEN --name my-pc
 ```
 
-The machine shows up on your dashboard and starts taking tasks when it's idle.
-Run the same command on each PC (settings can also go in
-`worker/worker.config.json`).
+For website bots: `pip install playwright && python -m playwright install chromium`.
+A Linux tray app is planned.
 
-## Idle / gaming behaviour
+## Repository layout
 
-The agent picks a mode every few seconds:
-
-| Mode | When | Behaviour |
-|------|------|-----------|
-| full | no keyboard/mouse for a while | runs tasks at full power |
-| light | you're using the PC | runs CPU-only at low priority |
-| paused | a game or fullscreen app is running | stops tasks, re-queues them to finish later |
-
-List your games in `worker/worker.config.json` so they trigger a pause by name:
-
-```json
-{ "idle_threshold": 300, "pause_on_fullscreen": true, "games": ["cs2.exe", "RocketLeague.exe"] }
+```
+worker/      the agent: idle detection, task runner, website-bot harness
+desktop/     the Windows tray app, its panel UI, the self-updater and the installer
+.github/     CI that builds Harvest.exe + Harvest-Setup.exe and publishes releases
 ```
 
-## Writing your own tasks
+## Building
 
-Start tasks from the dashboard: pick a built-in template (like CartPole) or
-paste your own Python. To adapt existing code, print one JSON line per episode:
+Pushing a tag like `v0.2.0` runs [`build-windows.yml`](.github/workflows/build-windows.yml): it stamps the
+version, builds `Harvest.exe` with PyInstaller, wraps it in `Harvest-Setup.exe` with Inno Setup, and publishes
+both with their `.sha256` files. To build locally on Windows, run `.\desktop\build_windows.ps1`.
 
-```python
-print(json.dumps({"episode": {"index": i, "reward": r, "steps": s}}), flush=True)
-```
+## Fair use
 
-Full guide: <https://harvest.codevexx.com/compat>. A complete example lives in
-[`examples/cartpole/agent.py`](examples/cartpole/agent.py).
+Point Harvest at things you own or have permission to use: your own code, sites and games, local simulations
+and public benchmarks. Website bots should only automate sites you own or are allowed to automate.
 
-## Ground rule
+## Security
 
-Point tasks at environments you own or control — your own game, a local
-simulation, or a standard benchmark like CartPole. Harvest is for training and
-compute on hardware and targets you're allowed to use.
+Please report vulnerabilities privately, see [SECURITY.md](SECURITY.md).

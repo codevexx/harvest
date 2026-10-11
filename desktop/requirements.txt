@@ -3,3 +3,5 @@ requests==2.32.3
 psutil==6.1.1
 pystray==0.19.5
 pillow==11.1.0
+# The flyout window (uses Microsoft Edge WebView2, built into Windows 10/11)
+pywebview==6.2.1

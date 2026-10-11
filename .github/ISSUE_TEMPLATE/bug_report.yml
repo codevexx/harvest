@@ -1,0 +1,35 @@
+name: Bug report
+description: Something in the Harvest app or agent is not working
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: "1. Open the Harvest panel\n2. ..."
+  - type: input
+    id: version
+    attributes:
+      label: Harvest version
+      description: Shown at the bottom of the Harvest panel.
+      placeholder: "0.2.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: [Windows 11, Windows 10, macOS, Linux]
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: "From %LOCALAPPDATA%\\Harvest\\harvest.log. Remove your connect token if it appears."
+      render: text

@@ -1,8 +1,10 @@
 name: Build Windows app
 
-# Builds Harvest.exe on a Windows runner. Pushing a tag like v0.1.0 also
-# publishes the exe to a GitHub Release, which is what the website's
-# "Download" button points at (releases/latest/download/Harvest.exe).
+# Builds Harvest.exe and the Harvest-Setup.exe installer on a Windows runner.
+# Pushing a tag like v0.2.0 also publishes both (plus .sha256 files) to a GitHub
+# Release. The website's Download button points at
+# releases/latest/download/Harvest-Setup.exe; the app's auto-updater downloads
+# Harvest.exe from the same release and refuses it without a matching .sha256.
 
 on:
   push:
@@ -27,6 +29,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r desktop/requirements.txt pyinstaller
 
+      - name: Stamp version from tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: echo "__version__ = \"${GITHUB_REF_NAME#v}\"" > desktop/version.py
+
+      - name: Smoke test imports
+        run: python -c "import sys; sys.path[:0] = ['.', 'desktop']; import harvest_tray, updater, winutil, webview; print('version', harvest_tray.__version__)"
+
       - name: Build icon
         run: python desktop/make_icon.py
 
@@ -35,19 +45,55 @@ jobs:
           pyinstaller --noconfirm --clean --onefile --windowed
           --name Harvest
           --icon desktop/harvest.ico
-          --paths .
+          --paths . --paths desktop
+          --add-data "desktop/ui;ui"
           --collect-submodules pystray
+          --collect-data webview
           desktop/harvest_tray.py
+
+      - name: Build installer (Harvest-Setup.exe)
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
+          $v = (python -c "import sys; sys.path.insert(0,'desktop'); import version; print(version.__version__)").Trim()
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$v" desktop\installer.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Checksums
+        shell: pwsh
+        run: |
+          foreach ($f in "Harvest.exe", "Harvest-Setup.exe") {
+            $h = (Get-FileHash "dist/$f" -Algorithm SHA256).Hash.ToLower()
+            "$h  $f" | Out-File -Encoding ascii -NoNewline "dist/$f.sha256"
+            Get-Content "dist/$f.sha256"
+          }
+
+      - name: Release notes from CHANGELOG.md
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          awk -v tag="## ${GITHUB_REF_NAME}" '$0==tag{on=1;next} /^## /{on=0} on' CHANGELOG.md > notes.md
+          printf '\n---\n**Download:** [Harvest-Setup.exe](https://github.com/codevexx/harvest/releases/download/%s/Harvest-Setup.exe) (Windows 10/11). Already installed? Harvest updates itself.\n' "$GITHUB_REF_NAME" >> notes.md
+          cat notes.md
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: Harvest-windows
-          path: dist/Harvest.exe
+          path: |
+            dist/Harvest.exe
+            dist/Harvest-Setup.exe
+            dist/*.sha256
 
       - name: Publish to Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/Harvest.exe
+          name: Harvest ${{ github.ref_name }}
+          body_path: notes.md
+          files: |
+            dist/Harvest-Setup.exe
+            dist/Harvest-Setup.exe.sha256
+            dist/Harvest.exe
+            dist/Harvest.exe.sha256
           fail_on_unmatched_files: true
