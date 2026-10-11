@@ -12,6 +12,8 @@ Job contract (simple and language-agnostic):
         {"log": "any message"}
     Any line that is not such a JSON object is forwarded as a log line.
   * Exit code 0 => done, anything else => failed.
+  * Files the task saves in outputs/ (path also in HARVEST_OUTPUTS) are zipped
+    and uploaded by the agent when it finishes.
 
 The job is paused (killed) if `should_stop()` becomes true — e.g. the user
 started a game. Already-reported episodes are kept, so re-queuing resumes
@@ -20,6 +22,7 @@ from where it left off (the job reads RESUME_FROM to skip finished episodes).
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import queue
@@ -27,6 +30,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -77,22 +81,93 @@ def _node_exe() -> str | None:
     return shutil.which("node")
 
 
-def _npm_install(work: Path, on_log, env) -> None:
-    """Install a Node task's dependencies into its own folder (never global)."""
-    if not (work / "package.json").exists() or (work / "node_modules").exists():
-        return
-    npm = shutil.which("npm")
-    if not npm:
-        on_log("package.json found but npm is not installed; skipping npm install")
-        return
-    on_log("$ npm install")
-    r = subprocess.run([npm, "install", "--no-audit", "--no-fund"], cwd=work, env=env,
-                       capture_output=True, text=True, timeout=600, creationflags=NO_WINDOW)
-    for line in (r.stdout + r.stderr).splitlines()[-15:]:
-        on_log(line)
+# Python tasks with a requirements.txt get their own environment, built once per
+# PC and reused by any later task with the same requirements and Python.
+ENVS_ROOT = (Path(os.environ["LOCALAPPDATA"]) / "Harvest" / "envs"
+             if os.environ.get("LOCALAPPDATA") else Path.home() / ".harvest" / "envs")
+KEEP_ENVS = 8
+INTERRUPTED = object()
 
 
-def _command(spec: dict, work: Path, on_log, env) -> list[str]:
+def _run_setup(cmd, cwd, env, on_log, should_stop, timeout=1800):
+    """Run a setup step (venv, pip, npm), streaming its output into the task log.
+    Returns True on success, False on failure, INTERRUPTED if should_stop()."""
+    on_log("$ " + " ".join(str(c) for c in cmd))
+    proc = subprocess.Popen([str(c) for c in cmd], cwd=cwd, env=env, text=True, bufsize=1,
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=NO_WINDOW)
+    q: "queue.Queue[str | None]" = queue.Queue()
+    threading.Thread(target=_reader, args=(proc.stdout, q), daemon=True).start()
+    deadline = time.monotonic() + timeout
+    while True:
+        if should_stop() or time.monotonic() > deadline:
+            proc.kill()
+            proc.wait()
+            if time.monotonic() > deadline:
+                on_log(f"setup step took longer than {timeout // 60} minutes; stopped")
+                return False
+            return INTERRUPTED
+        try:
+            line = q.get(timeout=0.5)
+        except queue.Empty:
+            continue
+        if line is None:
+            break
+        if line.strip():
+            on_log(line)
+    return proc.wait() == 0
+
+
+def _python_env(work: Path, on_log, env, should_stop):
+    """The Python to run this task with: the PC's own, or (if the task has a
+    requirements.txt) a saved environment with those packages installed."""
+    base = _python_exe()
+    req = work / "requirements.txt"
+    if not req.exists():
+        return base
+    wanted = "\n".join(sorted(l.strip() for l in req.read_text(encoding="utf-8", errors="replace").splitlines()
+                              if l.strip() and not l.strip().startswith("#")))
+    try:
+        ver = subprocess.run([base, "-c", "import sys; print(sys.version)"], capture_output=True, text=True,
+                             timeout=30, creationflags=NO_WINDOW).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        raise RuntimeError("Python is not installed on this machine")
+    key = hashlib.sha256((ver + "\n" + wanted).encode()).hexdigest()[:16]
+    home = ENVS_ROOT / key
+    py = home / ("Scripts/python.exe" if sys.platform.startswith("win") else "bin/python")
+    ready = home / ".harvest-ready"
+    if ready.exists():
+        ready.touch()
+        on_log(f"using this PC's saved environment for requirements.txt ({key})")
+        return str(py)
+
+    on_log("requirements.txt found: installing packages (once per PC, reused next time)")
+    shutil.rmtree(home, ignore_errors=True)  # an earlier attempt that did not finish
+    ENVS_ROOT.mkdir(parents=True, exist_ok=True)
+    # --system-site-packages: packages already installed globally (say a CUDA
+    # build of torch) are reused instead of downloaded again.
+    for cmd in ([base, "-m", "venv", "--system-site-packages", home],
+                [py, "-m", "pip", "install", "--disable-pip-version-check", "-r", req]):
+        ok = _run_setup(cmd, work, env, on_log, should_stop)
+        if ok is not True:
+            shutil.rmtree(home, ignore_errors=True)
+            if ok is INTERRUPTED:
+                return INTERRUPTED
+            raise RuntimeError("installing requirements.txt failed (see the output above)")
+    ready.write_text(time.strftime("%Y-%m-%d %H:%M:%S"))
+    _prune_envs()
+    return str(py)
+
+
+def _prune_envs() -> None:
+    """Keep the most recently used environments; delete the rest."""
+    envs = sorted((d for d in ENVS_ROOT.iterdir() if (d / ".harvest-ready").exists()),
+                  key=lambda d: (d / ".harvest-ready").stat().st_mtime, reverse=True)
+    for d in envs[KEEP_ENVS:]:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def _command(spec: dict, work: Path, on_log, env, should_stop):
+    """The command that runs the task, after any setup. INTERRUPTED if setup was stopped."""
     kind = spec.get("kind", "python")
     entry = spec.get("entry", "main.py")
     args = [str(a) for a in spec.get("args", [])]
@@ -100,7 +175,16 @@ def _command(spec: dict, work: Path, on_log, env) -> list[str]:
         node = _node_exe()
         if not node:
             raise RuntimeError("Node.js is not installed on this machine")
-        _npm_install(work, on_log, env)
+        if (work / "package.json").exists() and not (work / "node_modules").exists():
+            npm = shutil.which("npm")
+            if not npm:
+                on_log("package.json found but npm is not installed; skipping npm install")
+            else:
+                ok = _run_setup([npm, "install", "--no-audit", "--no-fund"], work, env, on_log, should_stop, 600)
+                if ok is INTERRUPTED:
+                    return INTERRUPTED
+                if not ok:
+                    raise RuntimeError("npm install failed (see the output above)")
         return [node, entry, *args]
     if kind == "browser":
         (work / "_harvest_browser.py").write_text(HARNESS, encoding="utf-8")
@@ -109,7 +193,19 @@ def _command(spec: dict, work: Path, on_log, env) -> list[str]:
             "timeout_s": spec.get("timeout_s", 60), "headless": spec.get("headless", True),
         }), encoding="utf-8")
         return [_python_exe(), "-u", "_harvest_browser.py"]
-    return [_python_exe(), "-u", entry, *args]
+    py = _python_env(work, on_log, env, should_stop)
+    if py is INTERRUPTED:
+        return INTERRUPTED
+    return [py, "-u", entry, *args]
+
+
+def task_dir(job_id: str) -> Path:
+    return WORK_ROOT / job_id
+
+
+def cleanup(job_id: str) -> None:
+    """Remove a finished task's folder (not done for paused tasks: they resume)."""
+    shutil.rmtree(task_dir(job_id), ignore_errors=True)
 
 
 def _reader(stream, q: "queue.Queue[str | None]") -> None:
@@ -135,8 +231,10 @@ def run_job(
     try:
         _write_bundle(spec.get("files", {}), work)
 
+        (work / "outputs").mkdir(exist_ok=True)
         env = os.environ.copy()
         env["RESUME_FROM"] = str(resume_from)
+        env["HARVEST_OUTPUTS"] = str(work / "outputs")
         # In "light" mode the user is at the machine: keep CPU use modest.
         cpu_budget = "2" if mode == "light" else "0"  # 0 => let the job decide
         env["FARM_CPU_BUDGET"] = cpu_budget
@@ -145,7 +243,11 @@ def run_job(
             env["MKL_NUM_THREADS"] = "2"
 
         env["PYTHONUNBUFFERED"] = "1"
-        cmd = _command(spec, work, on_log, env)
+        env["PIP_DISABLE_PIP_VERSION_CHECK"] = "1"
+        cmd = _command(spec, work, on_log, env, should_stop)
+        if cmd is INTERRUPTED:
+            on_log("stopped while setting up; it will continue later")
+            return "interrupted", None  # keep the folder
         on_log(f"$ {' '.join(cmd)}  (mode={mode}, resume_from={resume_from})")
 
         creationflags = NO_WINDOW
@@ -200,7 +302,7 @@ def run_job(
 
         code = proc.wait()
         status = "done" if code == 0 else "failed"
-        shutil.rmtree(work, ignore_errors=True)  # finished for good; clean up
+        # The agent uploads outputs/ and then removes the folder (see cleanup()).
         if status == "done":
             return "done", None
         return "failed", error or f"exited with code {code}"

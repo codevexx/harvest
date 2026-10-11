@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.3.0
+
+- **Much less network traffic.** Idle PCs check in every 15 to 30 seconds with one request (was three
+  every 3 seconds), and running tasks send progress in one batch every 10 seconds instead of one request per
+  episode. Busy machines no longer show as offline during long tasks.
+- **Python packages install themselves.** Include a `requirements.txt` and each PC builds a saved environment
+  for it once, then reuses it. Packages you installed globally (like a CUDA build of torch) are reused too.
+- **Download task outputs.** Files a task writes to `outputs/` (path in `HARVEST_OUTPUTS`) are zipped and
+  uploaded when it finishes, up to 2 GB. Website bots can save files with `harvest.save(name, data)`.
+- **Bigger uploads.** Up to 50 MB per task.
+- Rename or remove machines from the dashboard.
+- Pausing for a game during package installs stops cleanly and resumes later.
+
 ## v0.2.2
 
 - Fix: turning on "Run before anyone signs in" could fail with error 0x80070534 when Windows reported the

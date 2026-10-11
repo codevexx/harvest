@@ -7,6 +7,7 @@ machine's own Python, which has Playwright installed.
 Contract for the user's script (the body of an async function, run in the page):
     harvest.log(...)     -> a line in the task output
     harvest.sleep(ms)    -> wait
+    harvest.save(name, text) -> a file in outputs/, downloadable from the dashboard
     return 12            -> this run's score
     return {reward: 12, anything: 3}   -> score plus extra numbers
 Each run reloads the page. RESUME_FROM skips runs already reported.
@@ -30,8 +31,17 @@ HELPERS = """
 window.harvest = {
   log: (...a) => window.__harvestLog(a.map(x => typeof x === 'string' ? x : JSON.stringify(x)).join(' ')),
   sleep: (ms) => new Promise(r => setTimeout(r, ms)),
+  save: (name, data) => window.__harvestSave(String(name), typeof data === 'string' ? data : JSON.stringify(data, null, 2)),
 };
 """
+
+def save(name, text):
+    safe = "".join(c if c.isalnum() or c in "._- " else "_" for c in name).strip(". ") or "output.txt"
+    folder = os.environ.get("HARVEST_OUTPUTS", "outputs")
+    os.makedirs(folder, exist_ok=True)
+    with open(os.path.join(folder, safe[:120]), "w", encoding="utf-8") as f:
+        f.write(text)
+    return safe
 
 def score(result):
     if isinstance(result, bool):
@@ -57,6 +67,7 @@ async def main():
         browser = await p.chromium.launch(headless=cfg.get("headless", True))
         context = await browser.new_context(bypass_csp=True)
         await context.expose_function("__harvestLog", lambda s: out({"log": str(s)}))
+        await context.expose_function("__harvestSave", save)
         await context.add_init_script(HELPERS)
         page = await context.new_page()
         page.on("pageerror", lambda e: out({"log": "[page error] " + str(e)}))

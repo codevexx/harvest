@@ -82,11 +82,13 @@ start /wait "" "%LOCALAPPDATA%\Programs\Harvest\Harvest.exe" --connect YOUR_TOKE
 
 | Kind | How it runs | Needs on the PC |
 |------|-------------|-----------------|
-| **Python** | `python <file> [args]` in its own task folder | Python 3.11+ and the packages your code imports |
+| **Python** | `python <file> [args]` in its own task folder; packages from `requirements.txt` are installed once per PC | Python 3.11+ |
 | **Node.js** | `node <file> [args]`, after `npm install` if there is a `package.json` | Node.js |
 | **Website bot** | opens a URL in headless Chromium and runs your JavaScript inside the page | Playwright, installed with one click from the app's settings |
 
-Upload a single file or a whole folder (up to 1.5 MB). To get a live chart, print one JSON line per episode:
+Upload a single file or a whole folder (up to 50 MB). Anything a task saves in its `outputs/` folder
+(path in `HARVEST_OUTPUTS`) is zipped and can be downloaded from the dashboard when it finishes.
+To get a live chart, print one JSON line per episode:
 
 ```python
 print(json.dumps({"episode": {"index": i, "reward": score}}), flush=True)
@@ -97,6 +99,7 @@ Website bots return their score instead:
 ```js
 const items = document.querySelectorAll(".result");
 harvest.log(`found ${items.length}`);
+harvest.save("items.json", [...items].map(i => i.textContent));  // downloadable afterwards
 return { reward: items.length };
 ```
 
