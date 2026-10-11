@@ -39,13 +39,15 @@ def installed() -> bool:
 
 def install(exe: str, config_path: str) -> str | None:
     """Register and start the boot task. Must run elevated. Returns an error or None."""
-    user = f"{os.environ.get('USERDOMAIN', '')}\\{os.environ.get('USERNAME', '')}".lstrip("\\")
     args = f'--headless --config "{config_path}"'
+    # Ask Windows for the account (MACHINE\user). USERDOMAIN can say WORKGROUP,
+    # e.g. in an SSH session, which Task Scheduler cannot map to an account.
     script = f"""
 $ErrorActionPreference = 'Stop'
+$user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
 $a = New-ScheduledTaskAction -Execute {_q(exe)} -Argument {_q(args)}
 $t = New-ScheduledTaskTrigger -AtStartup
-$p = New-ScheduledTaskPrincipal -UserId {_q(user)} -LogonType S4U -RunLevel Limited
+$p = New-ScheduledTaskPrincipal -UserId $user -LogonType S4U -RunLevel Limited
 $s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
      -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances Queue `
      -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)

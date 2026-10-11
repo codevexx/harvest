@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.2.2
+
+- Fix: turning on "Run before anyone signs in" could fail with error 0x80070534 when Windows reported the
+  account's domain as WORKGROUP (for example over SSH).
+
 ## v0.2.1
 
 **Works before anyone signs in.** Turn on "Run before anyone signs in" in the Harvest panel's settings (or
