@@ -28,7 +28,7 @@ if IS_WIN:
     user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
                                     ctypes.c_int, ctypes.c_int, ctypes.c_uint]
     dwmapi.DwmSetWindowAttribute.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
-    for fn in ("CreateMutexW", "CreateEventW", "OpenEventW"):
+    for fn in ("CreateMutexW", "CreateEventW", "OpenEventW", "OpenMutexW"):
         getattr(kernel32, fn).restype = wintypes.HANDLE
 
     class MONITORINFO(ctypes.Structure):
@@ -79,6 +79,36 @@ def place_bottom_right(hwnd, margin_dip: int = 12) -> None:
 def focus(hwnd) -> None:
     if IS_WIN and hwnd:
         user32.SetForegroundWindow(hwnd)
+
+
+# --- named mutexes (tray app <-> background mode handoff) -----------------
+
+TRAY_ACTIVE = "Global\\HarvestTrayActive"        # held while the tray app runs
+HEADLESS_RUNNING = "Global\\HarvestHeadless"     # one background copy at a time
+HEADLESS_AGENT = "Global\\HarvestHeadlessAgent"  # held while background mode is working
+
+
+def hold_mutex(name: str):
+    """Create and keep a named mutex. Returns (handle, already_existed)."""
+    if not IS_WIN:
+        return None, False
+    h = kernel32.CreateMutexW(None, False, name)
+    return h, ctypes.get_last_error() == 183
+
+
+def release(handle) -> None:
+    if IS_WIN and handle:
+        kernel32.CloseHandle(handle)
+
+
+def mutex_exists(name: str) -> bool:
+    if not IS_WIN:
+        return False
+    h = kernel32.OpenMutexW(0x00100000, False, name)  # SYNCHRONIZE
+    if h:
+        kernel32.CloseHandle(h)
+        return True
+    return False
 
 
 # --- single instance -----------------------------------------------------

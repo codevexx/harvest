@@ -66,6 +66,30 @@ def detect_runtimes() -> list[str]:
     return found
 
 
+def machine_id() -> str:
+    """A stable, anonymous id for this PC (a hash, never the raw machine GUID), so
+    the dashboard keeps one entry per PC across restarts and app modes."""
+    import hashlib
+    raw = None
+    try:
+        if platform.system() == "Windows":
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography",
+                                0, winreg.KEY_READ | winreg.KEY_WOW64_64KEY) as k:
+                raw = winreg.QueryValueEx(k, "MachineGuid")[0]
+        else:
+            for f in ("/etc/machine-id", "/var/lib/dbus/machine-id"):
+                if Path(f).exists():
+                    raw = Path(f).read_text().strip()
+                    break
+    except Exception:
+        pass
+    if not raw:
+        import uuid
+        raw = f"{uuid.getnode()}-{platform.node()}"
+    return hashlib.sha256(("harvest:" + raw).encode()).hexdigest()[:32]
+
+
 def detect_specs() -> dict:
     gpu, is_nvidia = detect_gpu()
     ram_gb = cores = None
@@ -98,7 +122,7 @@ class Client:
     def register(self, name, specs) -> str:
         if self.cloud:
             r = self.s.post(f"{self.base}/api/agent/register",
-                            json={"name": name, "specs": specs}, timeout=15)
+                            json={"name": name, "specs": specs, "machine_id": machine_id()}, timeout=15)
         else:
             r = self.s.post(f"{self.base}/api/workers/register",
                             json={"name": name, "specs": specs}, timeout=15)

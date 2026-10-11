@@ -60,8 +60,9 @@ def cleanup_old() -> None:
 
 
 class Updater:
-    def __init__(self, version: str, on_change: Callable[[], None]):
+    def __init__(self, version: str, on_change: Callable[[], None], relaunch: bool = True):
         self.version = version
+        self.relaunch = relaunch  # background mode restarts through Task Scheduler instead
         self.on_change = on_change
         self.lock = threading.Lock()
         self.state = {"checking": False, "available": None, "downloading": False,
@@ -162,8 +163,9 @@ class Updater:
             self._set(error=f"Could not install the update ({type(e).__name__}). Is Harvest in a protected folder?")
             return False
         self._file.unlink(missing_ok=True)
-        flags = 0x00000008 | 0x00000200 if sys.platform.startswith("win") else 0  # DETACHED | NEW_GROUP
-        subprocess.Popen([str(exe), "--updated"], creationflags=flags, close_fds=True)
+        if self.relaunch:
+            flags = 0x00000008 | 0x00000200 if sys.platform.startswith("win") else 0  # DETACHED | NEW_GROUP
+            subprocess.Popen([str(exe), "--updated"], creationflags=flags, close_fds=True)
         return True
 
     # --- background loop --------------------------------------------------

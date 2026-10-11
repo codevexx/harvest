@@ -176,6 +176,8 @@
     <div class="group">
       <div class="row"><div class="l"><div class="a">Start with Windows</div><div class="b">Runs quietly in the tray after you sign in</div></div>
         <label class="switch"><input type="checkbox" id="f-autostart"><span class="tr"></span><span class="th"></span></label></div>
+      <div class="row" id="svcRow"><div class="l"><div class="a">Run before anyone signs in</div><div class="b" id="svcSub">Starts when the PC turns on. Windows asks for admin once.</div></div>
+        <label class="switch"><input type="checkbox" id="f-service"><span class="tr"></span><span class="th"></span></label></div>
       <div class="row"><div class="l"><div class="a">Update automatically</div><div class="b">Installs new versions when no task is running</div></div>
         <label class="switch"><input type="checkbox" id="f-autoupdate"><span class="tr"></span><span class="th"></span></label></div>
       <div class="row"><div class="l"><div class="a">Website tasks</div><div class="b" id="webStatus"></div></div>
@@ -220,6 +222,8 @@ window.hv = {
     if (!$("#s-name").value) $("#s-name").value = s.name;
     renderHome(s);
     renderWeb(s.website || {});
+    $("#svcSub").textContent = s.service_busy ? "Waiting for the admin prompt" :
+      s.service ? "On. Works even when nobody is signed in." : "Starts when the PC turns on. Windows asks for admin once.";
   },
 };
 
@@ -265,6 +269,7 @@ function openSettings() {
   $("#f-autostart").checked = !!S.autostart; $("#f-autoupdate").checked = !!S.auto_update;
   $("#f-server").value = S.server; $("#f-idle").value = Math.round((S.idle_threshold || 300) / 60);
   $("#f-autostart").closest(".row").classList.toggle("hide", !S.can_autostart);
+  $("#f-service").checked = !!S.service; $("#svcRow").classList.toggle("hide", !S.can_autostart);
   $("#f-err").textContent = ""; show("settings");
 }
 function save() {
@@ -272,6 +277,7 @@ function save() {
     token: $("#f-token").value.trim(), name: $("#f-name").value.trim(),
     games: $("#f-games").value.split(/[,\n]/).map(function (g) { return g.trim(); }).filter(Boolean),
     autostart: $("#f-autostart").checked, auto_update: $("#f-autoupdate").checked,
+    service: $("#f-service").checked,
     server: $("#f-server").value.trim(), idle_minutes: parseInt($("#f-idle").value, 10) || 5,
   };
   call("save_settings", cfg).then(function (err) { if (err) $("#f-err").textContent = err; else show("home"); });

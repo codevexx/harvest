@@ -29,6 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import webview
 from PIL import Image, ImageDraw
 
+import service
 import updater as upd
 import winutil
 from version import __version__
@@ -45,7 +46,7 @@ FROZEN = getattr(sys, "frozen", False)
 CONFIG_DIR = Path(os.environ.get("APPDATA") or os.path.expanduser("~/.config")) / APP_NAME
 CONFIG_PATH = CONFIG_DIR / "config.json"
 SAVED_KEYS = ("coordinator", "token", "name", "poll_interval", "idle_threshold",
-              "pause_on_fullscreen", "games", "auto_update")
+              "pause_on_fullscreen", "games", "auto_update", "python")
 
 DOT = {  # status -> badge color on the tray icon
     "full": (52, 168, 83), "light": (251, 188, 4), "busy": (66, 133, 244),
@@ -162,6 +163,8 @@ class App:
         self.last_hide = 0.0
         self.styled = False
         self.updater = upd.Updater(__version__, self.push)
+        self.service_on = service.installed()
+        self.service_busy = False
         self.icon = None
         self.window = webview.create_window(
             TITLE, html=ui_html(), js_api=Api(self),
@@ -182,6 +185,7 @@ class App:
             "games": c.get("games", []), "idle_threshold": c.get("idle_threshold", 300),
             "auto_update": c.get("auto_update", True),
             "autostart": winutil.get_autostart(), "can_autostart": IS_WIN and FROZEN,
+            "service": self.service_on, "service_busy": self.service_busy,
             "status": {"mode": self.mode, "state": self.state, "detail": self.detail},
             "user_paused": c.get("user_paused", False), "finished": self.finished,
             "runtimes": self.runtimes, "update": self.updater.snapshot(),
@@ -228,9 +232,18 @@ class App:
         if not self.cfg.get("token"):
             return
         self.stop_event = threading.Event()
-        self.thread = threading.Thread(
-            target=run_agent, args=(self.cfg, self.stop_event, self._on_status, self._on_info),
-            daemon=True)
+        stop = self.stop_event
+
+        def go():
+            # If the background copy was working, let it hand its task back first
+            # so the same task never runs twice on this PC.
+            deadline = time.monotonic() + 60
+            while winutil.mutex_exists(winutil.HEADLESS_AGENT) and time.monotonic() < deadline:
+                if stop.wait(1):
+                    return
+            run_agent(self.cfg, stop, self._on_status, self._on_info)
+
+        self.thread = threading.Thread(target=go, daemon=True)
         self.thread.start()
 
     def stop_agent(self):
@@ -280,8 +293,20 @@ class App:
         save_config(c)
         if restart:
             self.restart_agent()
+            threading.Thread(target=service.restart, daemon=True).start()
+        if "service" in data and IS_WIN and FROZEN and bool(data["service"]) != self.service_on:
+            threading.Thread(target=self.toggle_service, args=(bool(data["service"]),), daemon=True).start()
         self.push()
         return None
+
+    def toggle_service(self, enable: bool):
+        """Register or remove the boot task. Windows shows a UAC prompt."""
+        self.service_busy = True
+        self.push()
+        service.run_elevated(sys.executable, "--install-service" if enable else "--uninstall-service")
+        self.service_on = service.installed()
+        self.service_busy = False
+        self.push()
 
     def install_website_support(self):
         """pip install playwright + its Chromium into the Python that runs tasks."""
@@ -379,6 +404,7 @@ class App:
             pass
 
     def run(self, show_first: bool):
+        self._tray_mutex, _ = winutil.hold_mutex(winutil.TRAY_ACTIVE)  # background copy steps aside
         if IS_WIN:
             import pystray
             self.icon = pystray.Icon(APP_NAME, tray_image("offline"), APP_NAME, self._menu())
@@ -401,24 +427,139 @@ class App:
         self.quit()
 
 
-def _log_to_file():
-    """A windowed build has no console: keep output in %LOCALAPPDATA%\\Harvest\\harvest.log."""
-    if sys.stdout is not None and sys.stderr is not None:
+def _log_to_file(name: str = "harvest.log"):
+    """The packaged app has no console: keep output in %LOCALAPPDATA%\\Harvest."""
+    if not FROZEN and sys.stdout is not None:
         return
     try:
         upd.DATA_DIR.mkdir(parents=True, exist_ok=True)
-        path = upd.DATA_DIR / "harvest.log"
+        path = upd.DATA_DIR / name
         if path.exists() and path.stat().st_size > 2_000_000:
             path.replace(path.with_suffix(".log.1"))
         sys.stdout = sys.stderr = open(path, "a", encoding="utf-8", buffering=1)
-        print(f"--- Harvest {__version__} started {time.strftime('%Y-%m-%d %H:%M:%S')}")
     except OSError:
         sys.stdout = sys.stderr = open(os.devnull, "w")
+    print(f"--- Harvest {__version__} {' '.join(sys.argv[1:])} started {time.strftime('%Y-%m-%d %H:%M:%S')}")
+
+
+def _arg(args: list[str], flag: str) -> str | None:
+    if flag in args:
+        i = args.index(flag)
+        if i + 1 < len(args):
+            return args[i + 1]
+    return None
+
+
+def connect_cli(args: list[str]) -> int:
+    """Harvest.exe --connect hv_... [--name NAME] [--server URL]: save the token
+    without opening any window (for PCs nobody signs in to)."""
+    import requests
+    cfg = load_config()
+    token = (_arg(args, "--connect") or "").strip()
+    if not token.startswith("hv_"):
+        print("connect: that is not a connect token (it starts with hv_)")
+        return 2
+    server = (_arg(args, "--server") or cfg["coordinator"]).rstrip("/")
+    try:
+        r = requests.get(f"{server}/api/agent/job", params={"job_id": "-"},
+                         headers={"authorization": f"Bearer {token}"}, timeout=20)
+        if "invalid farm token" in r.text:
+            print("connect: the server rejected this token. Copy a fresh one from the dashboard.")
+            return 3
+    except requests.RequestException as e:
+        print(f"connect: could not reach {server} ({type(e).__name__}); saving anyway")
+    cfg.update(token=token, coordinator=server, name=(_arg(args, "--name") or cfg["name"])[:60])
+    save_config(cfg)
+    service.restart()
+    print(f"connect: saved. This PC is '{cfg['name']}' on {server}.")
+    return 0
+
+
+def install_service_cli() -> int:
+    """Harvest.exe --install-service (run as admin): start at boot, before sign-in."""
+    cfg = load_config()
+    py = _python_exe()
+    if py and os.path.isabs(py):
+        cfg["python"] = py  # the boot task may not see the user's PATH
+    save_config(cfg)
+    err = service.install(sys.executable, str(CONFIG_PATH))
+    print(f"install-service: {err or 'ok'}")
+    return 1 if err else 0
+
+
+def run_headless() -> int:
+    """Background mode: started by Task Scheduler at boot, no window. Works while
+    nobody is using the tray app, and steps aside whenever the tray app runs."""
+    me, existed = winutil.hold_mutex(winutil.HEADLESS_RUNNING)
+    if existed:
+        return 0
+    exe_mtime = os.path.getmtime(sys.executable) if FROZEN else None
+    state = {"stop": None, "thread": None, "key": None, "mutex": None}
+    tray_up = lambda: winutil.mutex_exists(winutil.TRAY_ACTIVE)
+
+    def stop_agent():
+        if state["stop"]:
+            state["stop"].set()
+            state["thread"].join(timeout=20)
+        winutil.release(state["mutex"])
+        state.update(stop=None, thread=None, mutex=None)
+        print("background: stopped")
+
+    def on_status(mode, st, detail, last={}):
+        if (mode, st, detail) != last.get("v"):
+            last["v"] = (mode, st, detail)
+            print(f"background: {mode}/{st}" + (f" {detail}" if detail else ""))
+
+    quit_flag = threading.Event()
+    updater = upd.Updater(__version__, lambda: None, relaunch=False)
+    threading.Thread(target=updater.run, daemon=True, args=(
+        quit_flag, lambda: load_config().get("auto_update", True) and not tray_up(),
+        lambda: state["thread"] is None or not state["thread"].is_alive(), quit_flag.set)).start()
+
+    while not quit_flag.is_set():
+        cfg = load_config()
+        cfg["headless"] = True
+        if cfg.get("python"):
+            os.environ["HARVEST_PYTHON"] = cfg["python"]
+        key = (cfg.get("token"), cfg.get("name"), cfg.get("coordinator"), tuple(cfg.get("games", [])))
+        want = bool(cfg.get("token")) and not tray_up()
+        if state["thread"] and (not want or key != state["key"]):
+            stop_agent()
+        if want and not state["thread"]:
+            state["mutex"], _ = winutil.hold_mutex(winutil.HEADLESS_AGENT)
+            state["stop"], state["key"] = threading.Event(), key
+            state["thread"] = threading.Thread(target=run_agent, args=(cfg, state["stop"], on_status), daemon=True)
+            state["thread"].start()
+            print(f"background: working as '{cfg.get('name')}'")
+        if exe_mtime and os.path.exists(sys.executable) and os.path.getmtime(sys.executable) != exe_mtime:
+            quit_flag.set()  # a new version was installed
+        quit_flag.wait(5)
+
+    stop_agent()
+    print("background: restarting for an update")
+    service.queue_run()
+    winutil.release(me)
+    return 0
 
 
 def main():
-    _log_to_file()
+    global CONFIG_PATH, CONFIG_DIR
     args = sys.argv[1:]
+    if _arg(args, "--config"):
+        CONFIG_PATH = Path(_arg(args, "--config"))
+        CONFIG_DIR = CONFIG_PATH.parent
+    if "--headless" in args:
+        _log_to_file("harvest-background.log")
+        sys.exit(run_headless())
+    _log_to_file()
+    if "--connect" in args:
+        sys.exit(connect_cli(args))
+    if "--install-service" in args:
+        sys.exit(install_service_cli())
+    if "--uninstall-service" in args:
+        err = service.uninstall()
+        print(f"uninstall-service: {err or 'ok'}")
+        sys.exit(1 if err else 0)
     if not winutil.acquire_single_instance(wait_s=20 if "--updated" in args else 0):
         winutil.signal_running_instance()  # already running: just open its flyout
         return

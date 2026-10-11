@@ -79,6 +79,30 @@ def foreground_is_fullscreen() -> bool:
     return w >= sw and h >= sh
 
 
+def someone_signed_in() -> bool:
+    """True if any user has an active Windows session (console or remote desktop).
+    Used in background mode, which runs before sign-in and cannot see input."""
+    if not IS_WINDOWS:
+        return False
+    import ctypes
+    from ctypes import wintypes
+
+    class WTS_SESSION_INFOW(ctypes.Structure):
+        _fields_ = [("SessionId", wintypes.DWORD), ("pWinStationName", wintypes.LPWSTR),
+                    ("State", ctypes.c_int)]
+
+    wtsapi = ctypes.WinDLL("wtsapi32")
+    info = ctypes.POINTER(WTS_SESSION_INFOW)()
+    count = wintypes.DWORD()
+    if not wtsapi.WTSEnumerateSessionsW(None, 0, 1, ctypes.byref(info), ctypes.byref(count)):
+        return True  # cannot tell: assume someone is there and stay light
+    try:
+        return any(info[i].SessionId != 0 and info[i].State == 0  # WTSActive
+                   for i in range(count.value))
+    finally:
+        wtsapi.WTSFreeMemory(info)
+
+
 # --- the one call the agent uses -----------------------------------------
 
 def get_mode(cfg: dict) -> str:
@@ -86,6 +110,12 @@ def get_mode(cfg: dict) -> str:
     user_paused (bool, set from the tray app's Pause button)."""
     if cfg.get("user_paused"):
         return "held"  # like paused, but shown as "paused by you"
+    if cfg.get("headless"):
+        # Background mode (before sign-in) cannot see the user's keyboard or
+        # windows, so: games by name pause, anyone signed in means light.
+        if running_games(cfg.get("games", [])):
+            return "paused"
+        return "light" if someone_signed_in() else "full"
     games = running_games(cfg.get("games", []))
     if games:
         return "paused"

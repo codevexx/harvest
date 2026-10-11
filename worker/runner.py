@@ -34,12 +34,19 @@ from .browser_harness import HARNESS
 
 def _python_exe() -> str:
     """Interpreter used to run task scripts. In a packaged build (PyInstaller)
-    sys.executable is the app itself, so fall back to the Python the user
-    installed for their tasks (overridable with HARVEST_PYTHON)."""
-    if getattr(sys, "frozen", False):
-        return (os.environ.get("HARVEST_PYTHON")
-                or shutil.which("python") or shutil.which("py") or "python")
-    return sys.executable
+    sys.executable is the app itself, so use the Python the user installed
+    (HARVEST_PYTHON overrides). The Microsoft Store "python" stub in
+    WindowsApps only opens the Store, so it is skipped."""
+    if not getattr(sys, "frozen", False):
+        return sys.executable
+    if os.environ.get("HARVEST_PYTHON"):
+        return os.environ["HARVEST_PYTHON"]
+    for name in ("python", "python3", "py"):
+        for d in os.environ.get("PATH", "").split(os.pathsep):
+            exe = shutil.which(name, path=d)
+            if exe and "WindowsApps" not in exe:
+                return exe
+    return "python"
 
 
 # Each job gets a stable folder here (keyed by job id) instead of a throwaway

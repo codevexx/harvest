@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.2.1
+
+**Works before anyone signs in.** Turn on "Run before anyone signs in" in the Harvest panel's settings (or
+tick it in the installer) and Harvest starts with the PC through Task Scheduler. When you sign in, the tray
+app takes over; when you sign out, the background copy picks the work back up.
+
+- `Harvest.exe --connect <token> --name <pc>` connects a PC without opening any window.
+- Each PC now keeps a single entry on the dashboard across restarts.
+- A task that was running when a PC crashed or lost power goes back in the queue and resumes.
+- Tasks use the real Python install, never the Microsoft Store placeholder.
+- The app always writes a log to `%LOCALAPPDATA%\Harvest`.
+
 ## v0.2.0
 
 **New Windows app.** Harvest now installs with `Harvest-Setup.exe` (no admin rights needed) and lives by the

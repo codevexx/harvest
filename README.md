@@ -51,6 +51,7 @@ panels, showing:
 - what the PC is doing right now, and why
 - a **Pause** button for when you need every core
 - settings for start-with-Windows, games to always pause for, and website-task support
+- **Run before anyone signs in**: starts with the PC, so a machine nobody logs into still works
 
 It **updates itself** from this repository's releases, and checks every download against the SHA-256
 published with it before installing.
@@ -62,6 +63,13 @@ published with it before installing.
 2. Sign in at [harvest.codevexx.com](https://harvest.codevexx.com/app) with Google, open **Machines**, choose
    **Connect a machine** and copy the token.
 3. Click the Harvest icon by the clock, paste the token, press **Connect**.
+
+For a PC nobody signs in to (a home server), tick **Keep working when no one is signed in** in the
+installer, then connect it from any terminal on that PC:
+
+```bat
+start /wait "" "%LOCALAPPDATA%\Programs\Harvest\Harvest.exe" --connect YOUR_TOKEN --name server-pc
+```
 
 <br clear="right">
 

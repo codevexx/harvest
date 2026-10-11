@@ -42,6 +42,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "autostart"; Description: "Start Harvest when I sign in to Windows"; GroupDescription: "Options:"
+Name: "service"; Description: "Keep working when no one is signed in (asks for admin)"; GroupDescription: "Options:"; Flags: unchecked
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Options:"; Flags: unchecked
 
 [Files]
@@ -57,7 +58,14 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueName: "Harvest"; Flags: uninsdeletevalue dontcreatekey
 
 [Run]
+; Boot-time background task (Task Scheduler, runs before sign-in). Needs admin once.
+Filename: "{app}\Harvest.exe"; Parameters: "--install-service"; Verb: "runas"; Flags: shellexec waituntilterminated runhidden; Tasks: service; StatusMsg: "Setting Harvest to start with the PC..."
+; Setup stopped every copy of Harvest to replace the file; start the background one again.
+Filename: "{sys}\schtasks.exe"; Parameters: "/run /tn Harvest"; Flags: runhidden; Check: BootTaskExists
 Filename: "{app}\Harvest.exe"; Description: "Open Harvest now"; Flags: nowait postinstall skipifsilent
+
+[UninstallRun]
+Filename: "{app}\Harvest.exe"; Parameters: "--uninstall-service"; Verb: "runas"; Flags: shellexec waituntilterminated runhidden; Check: BootTaskExists; RunOnceId: "RemoveBootTask"
 
 [UninstallDelete]
 Type: files; Name: "{app}\Harvest.old.exe"
@@ -75,6 +83,13 @@ function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   StopHarvest();
   Result := '';
+end;
+
+function BootTaskExists(): Boolean;
+var
+  Code: Integer;
+begin
+  Result := Exec(ExpandConstant('{sys}\schtasks.exe'), '/query /tn Harvest', '', SW_HIDE, ewWaitUntilTerminated, Code) and (Code = 0);
 end;
 
 function InitializeUninstall(): Boolean;
