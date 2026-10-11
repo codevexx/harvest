@@ -26,6 +26,16 @@ import threading
 from pathlib import Path
 from typing import Callable
 
+def _python_exe() -> str:
+    """Interpreter used to run task scripts. In a packaged build (PyInstaller)
+    sys.executable is the app itself, so fall back to the Python the user
+    installed for their tasks (overridable with HARVEST_PYTHON)."""
+    if getattr(sys, "frozen", False):
+        return (os.environ.get("HARVEST_PYTHON")
+                or shutil.which("python") or shutil.which("py") or "python")
+    return sys.executable
+
+
 # Each job gets a stable folder here (keyed by job id) instead of a throwaway
 # temp dir, so a job paused by gaming keeps its checkpoint and resumes for real
 # when the same machine picks it back up.
@@ -73,7 +83,7 @@ def run_job(
             env["OMP_NUM_THREADS"] = "2"
             env["MKL_NUM_THREADS"] = "2"
 
-        cmd = [sys.executable, "-u", entry, *args]
+        cmd = [_python_exe(), "-u", entry, *args]
         on_log(f"$ {' '.join(cmd)}  (mode={mode}, resume_from={resume_from})")
 
         creationflags = 0

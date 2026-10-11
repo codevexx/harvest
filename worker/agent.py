@@ -167,33 +167,70 @@ def load_config() -> dict:
 
 # --- main loop -----------------------------------------------------------
 
-def main() -> None:
-    cfg = load_config()
+def run_agent(cfg: dict, stop_event=None, on_status=None) -> None:
+    """Connect to Harvest and process work until stop_event is set.
+
+    Shared by the CLI (main) and the desktop tray app. on_status(mode, state,
+    detail) is called on changes so a UI can show idle/running/paused/offline.
+    """
+    def status(mode, state, detail=None):
+        if on_status:
+            try:
+                on_status(mode, state, detail)
+            except Exception:
+                pass
+
+    def stopped():
+        return bool(stop_event and stop_event.is_set())
+
+    def wait(secs):
+        stop_event.wait(secs) if stop_event else time.sleep(secs)
+
     specs = detect_specs()
     has_gpu = specs["has_gpu"]
     client = Client(cfg["coordinator"], cfg.get("token"))
 
-    print(f"worker '{cfg['name']}' -> {client.base} ({'cloud' if client.cloud else 'local'})")
-    print(f"  {specs['cpu']} · {specs['ram_gb']} GB · GPU: {specs['gpu'] or 'none'}")
+    # Register, retrying until connected (or stopped).
+    while not stopped():
+        try:
+            client.register(cfg["name"], specs)
+            break
+        except requests.RequestException:
+            status("offline", "idle", "connecting")
+            wait(5)
+    if stopped():
+        return
+    status("full", "idle", None)
 
-    client.register(cfg["name"], specs)
-    print(f"  registered as {client.worker_id}")
-
-    while True:
+    while not stopped():
         try:
             mode = idle.get_mode(cfg)
-            if not _run_available_job(client, has_gpu, cfg, mode):
+            if not _run_available_job(client, has_gpu, cfg, mode, stop_event, status):
                 client.heartbeat(mode, "idle")
-                time.sleep(cfg["poll_interval"])
-        except requests.RequestException as e:
-            print(f"  coordinator unreachable: {e}; retrying")
-            time.sleep(5)
+                status(mode, "idle", None)
+                wait(cfg.get("poll_interval", 3))
+        except requests.RequestException:
+            status("offline", "idle", "reconnecting")
+            wait(5)
         except KeyboardInterrupt:
-            print("\nstopping worker")
-            return
+            break
 
 
-def _run_available_job(client: Client, has_gpu, cfg, mode) -> bool:
+def main() -> None:
+    cfg = load_config()
+    print(f"worker '{cfg['name']}' -> {cfg['coordinator'].rstrip('/')} "
+          f"({'cloud' if cfg.get('token') else 'local'})")
+
+    def on_status(mode, state, detail):
+        print(f"  [{mode}/{state}]" + (f" {detail}" if detail else ""))
+
+    try:
+        run_agent(cfg, on_status=on_status)
+    except KeyboardInterrupt:
+        print("\nstopping worker")
+
+
+def _run_available_job(client: Client, has_gpu, cfg, mode, stop_event=None, status=None) -> bool:
     if mode == "paused":
         return False
 
@@ -203,13 +240,16 @@ def _run_available_job(client: Client, has_gpu, cfg, mode) -> bool:
         return False
 
     job_id = job["id"]
-    print(f"  running job {job_id}: {job['name']}")
+    if status:
+        status(mode, "busy", job.get("name"))
     client.heartbeat(mode, "busy")
 
     def should_stop():
+        if stop_event and stop_event.is_set():
+            return True
         return idle.get_mode(cfg) == "paused"
 
-    status, error = run_job(
+    result, error = run_job(
         job,
         on_episode=lambda i, r, s, x: client.episode(job_id, i, r, s, x),
         on_log=lambda line: client.log(job_id, line),
@@ -217,12 +257,10 @@ def _run_available_job(client: Client, has_gpu, cfg, mode) -> bool:
         resume_from=job.get("episodes_done", 0),
     )
 
-    if status == "interrupted":
+    if result == "interrupted":
         client.requeue(job_id)
-        print(f"  job {job_id} paused; re-queued")
     else:
-        client.finish(job_id, status, error)
-        print(f"  job {job_id} {status}")
+        client.finish(job_id, result, error)
     return True
 
 

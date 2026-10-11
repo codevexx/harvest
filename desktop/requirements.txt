@@ -1,0 +1,5 @@
+# Harvest desktop tray app (Windows)
+requests==2.32.3
+psutil==6.1.1
+pystray==0.19.5
+pillow==11.1.0
