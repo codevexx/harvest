@@ -17,6 +17,7 @@ import gzip
 import json
 import platform
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -33,7 +34,8 @@ except ImportError:
 
 from . import idle
 from . import runtimes as setup_mod
-from .runner import NO_WINDOW, _node_exe, _python_exe, cleanup, created_files, reset_discovery, run_job, task_dir
+from .runner import (NO_WINDOW, START_MARK, _node_exe, _python_exe, cleanup, created_files, reset_discovery,
+                     run_job, task_dir)
 
 CONFIG_PATH = Path(__file__).parent / "worker.config.json"
 
@@ -212,9 +214,10 @@ class Client:
             raise RuntimeError("the task's files are not in the expected format")
         return files
 
-    def upload_output(self, job_id, path: Path, size: int, manifest: list) -> None:
-        """Upload outputs.zip in pieces (each under the server's request limit)."""
-        r = self.s.post(f"{self.base}/api/agent/output/start", json={"job_id": job_id, "size": size}, timeout=30)
+    def upload_output(self, job_id, path: Path, size: int, manifest: list, kind: str = "output") -> None:
+        """Upload outputs.zip (or a paused task's checkpoint) in pieces, each
+        under the server's request limit."""
+        r = self.s.post(f"{self.base}/api/agent/output/start", json={"job_id": job_id, "size": size, "kind": kind}, timeout=30)
         if r.status_code == 501:
             raise OutputsDisabled()
         _raise_with_message(r)
@@ -223,13 +226,25 @@ class Client:
         with open(path, "rb") as f:
             while chunk := f.read(up["part_size"]):
                 pr = self.s.put(f"{self.base}/api/agent/output/part", data=chunk, timeout=900,
-                                params={"job_id": job_id, "upload_id": up["upload_id"], "n": n})
+                                params={"job_id": job_id, "upload_id": up["upload_id"], "n": n, "kind": kind})
                 _raise_with_message(pr)
                 parts.append(pr.json())
                 n += 1
         _raise_with_message(self.s.post(f"{self.base}/api/agent/output/complete", timeout=60, json={
-            "job_id": job_id, "upload_id": up["upload_id"], "parts": parts, "files": manifest,
+            "job_id": job_id, "upload_id": up["upload_id"], "parts": parts, "files": manifest, "kind": kind,
         }))
+
+    def download_checkpoint(self, job_id, dest: Path, limit: int = 600 * 1024 * 1024) -> None:
+        """Save a paused task's checkpoint zip (made by another machine) to dest."""
+        with self.s.get(f"{self.base}/api/agent/checkpoint", params={"job_id": job_id}, timeout=300, stream=True) as r:
+            _raise_with_message(r)
+            got = 0
+            with open(dest, "wb") as f:
+                for chunk in r.iter_content(1 << 20):
+                    got += len(chunk)
+                    if got > limit:
+                        raise RuntimeError("checkpoint is larger than expected")
+                    f.write(chunk)
 
     def episode(self, job_id, index, reward, steps, extra):
         if self.cloud:
@@ -542,6 +557,10 @@ def _run_job(client: Client, job: dict, cfg, mode, stop_event=None, status=None)
             client.finish(job_id, "failed", "could not download the task's files")
             return
 
+    resume_from = job.get("episodes_done", 0)
+    if client.cloud and "same_machine" in job:
+        resume_from = _prepare_folder(client, job, resume_from, reporter.log)
+
     def should_stop():
         if stop_event and stop_event.is_set():
             return True
@@ -554,11 +573,13 @@ def _run_job(client: Client, job: dict, cfg, mode, stop_event=None, status=None)
         on_episode=reporter.episode,
         on_log=reporter.log, on_total=reporter.set_total,
         should_stop=should_stop, mode=mode,
-        resume_from=job.get("episodes_done", 0),
+        resume_from=resume_from,
     )
     finished = reporter.status == "cancelled" or result != "interrupted"
     if finished and client.cloud:
         _upload_outputs(client, job_id, reporter.log)
+    elif client.cloud:
+        _save_checkpoint(client, job_id, reporter.log)  # so any machine can continue it
     reporter.stop()
 
     if reporter.status == "cancelled":
@@ -569,6 +590,83 @@ def _run_job(client: Client, job: dict, cfg, mode, stop_event=None, status=None)
         client.finish(job_id, result, error)
     if finished:
         cleanup(job_id)
+
+
+CHECKPOINT_LIMIT = 500 * 1024 * 1024
+
+
+def _prepare_folder(client: Client, job: dict, resume_from: int, log) -> int:
+    """Set up the task folder for a run. A task paused on this machine keeps its
+    folder; one paused elsewhere gets the checkpoint that machine saved.
+    Returns the step to resume from (0 = start over)."""
+    import zipfile
+    job_id, work = job["id"], task_dir(job["id"])
+    if job.get("same_machine") and work.is_dir():
+        return resume_from
+    cleanup(job_id)  # an old copy from an earlier attempt would be out of date
+    if not job.get("checkpoint") or not resume_from:
+        return resume_from
+    zpath = work.parent / f"{job_id}-checkpoint.zip"
+    try:
+        work.mkdir(parents=True, exist_ok=True)
+        log("downloading the checkpoint saved by the previous machine")
+        client.download_checkpoint(job_id, zpath)
+        root, total = work.resolve(), 0
+        with zipfile.ZipFile(zpath) as z:
+            infos = z.infolist()
+            if len(infos) > 10000:
+                raise RuntimeError("too many files")
+            for info in infos:
+                name = info.filename.replace("\\", "/")
+                target = (work / name).resolve()
+                if name.startswith("/") or ":" in name or root not in target.parents:
+                    raise RuntimeError(f"unsafe path {name!r}")
+                total += info.file_size
+                if total > 4 * CHECKPOINT_LIMIT:
+                    raise RuntimeError("unpacks too large")
+                if name.endswith("/"):
+                    continue
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with z.open(info) as src, open(target, "wb") as out:
+                    shutil.copyfileobj(src, out, 1 << 20)
+        log(f"checkpoint restored ({len(infos)} files); continuing from step {resume_from}")
+        return resume_from
+    except Exception as e:
+        cleanup(job_id)
+        log(f"could not restore the checkpoint ({e}); starting over")
+        return 0
+    finally:
+        zpath.unlink(missing_ok=True)
+
+
+def _save_checkpoint(client: Client, job_id: str, log) -> None:
+    """Upload a paused task's results so far (outputs/ plus files it created),
+    so whichever machine runs it next can continue instead of starting over."""
+    import zipfile
+    work = task_dir(job_id)
+    out = work / "outputs"
+    files = [p for p in out.rglob("*") if p.is_file() and not p.is_symlink()] if out.is_dir() else []
+    files += created_files(job_id)
+    if not files:
+        return
+    mark = work / START_MARK
+    zpath = work.parent / f"{job_id}-checkpoint.zip"
+    try:
+        with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as z:
+            for p in files + ([mark] if mark.exists() else []):
+                z.write(p, p.relative_to(work).as_posix())
+        size = zpath.stat().st_size
+        if size > CHECKPOINT_LIMIT:
+            log(f"checkpoint is {size / 1e6:.0f} MB (over 500 MB): it will continue on this machine only")
+            return
+        client.upload_output(job_id, zpath, size, [], kind="checkpoint")
+        log(f"checkpoint saved ({size / 1e6:.1f} MB): any of your machines can continue this task")
+    except OutputsDisabled:
+        pass
+    except Exception as e:
+        log(f"checkpoint not saved ({e}): it will continue on this machine, or start over elsewhere")
+    finally:
+        zpath.unlink(missing_ok=True)
 
 
 def _upload_outputs(client: Client, job_id: str, log) -> None:

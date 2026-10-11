@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.6.0
+
+- **Continue on any machine.** When a task is paused (say, a game starts), Harvest saves what it has written so
+  far (the `outputs/` folder and other files it created) as a checkpoint. If a different PC picks the task up, it
+  restores that checkpoint first and continues from the same step. The checkpoint is deleted when the task ends.
+- **Parameter sweeps.** Start one task with several values per setting (for example `lr = 0.001, 0.01, 0.1`) and
+  Harvest runs every combination across your machines. Values arrive as `--name value` arguments (or wherever
+  you put `{name}`), and as JSON in `HARVEST_PARAMS`. Website bots read them from `harvest.params`.
+
 ## v0.5.2
 
 - **Results are kept even without `outputs/`.** If a task saves nothing into `outputs/`, the files it created

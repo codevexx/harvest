@@ -8,6 +8,7 @@ Contract for the user's script (the body of an async function, run in the page):
     harvest.log(...)     -> a line in the task output
     harvest.sleep(ms)    -> wait
     harvest.save(name, text) -> a file in outputs/, downloadable from the dashboard
+    harvest.params       -> this run's sweep values, e.g. {delay: "200"} ({} if none)
     return 12            -> this run's score
     return {reward: 12, anything: 3}   -> score plus extra numbers
 Each run reloads the page. RESUME_FROM skips runs already reported.
@@ -68,7 +69,11 @@ async def main():
         context = await browser.new_context(bypass_csp=True)
         await context.expose_function("__harvestLog", lambda s: out({"log": str(s)}))
         await context.expose_function("__harvestSave", save)
-        await context.add_init_script(HELPERS)
+        try:
+            params = json.loads(os.environ.get("HARVEST_PARAMS") or "{}")
+        except ValueError:
+            params = {}
+        await context.add_init_script(HELPERS + "window.harvest.params = " + json.dumps(params) + ";")
         page = await context.new_page()
         page.on("pageerror", lambda e: out({"log": "[page error] " + str(e)}))
         for i in range(start, runs):
