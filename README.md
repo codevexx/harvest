@@ -13,6 +13,7 @@ while they sit idle, and steps aside the moment you start a game.
 [![Build](https://img.shields.io/github/actions/workflow/status/codevexx/harvest/build-windows.yml?label=windows%20build)](https://github.com/codevexx/harvest/actions/workflows/build-windows.yml)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0b57d0)
 ![Python](https://img.shields.io/badge/python-3.11%2B-3776ab)
+[![License](https://img.shields.io/badge/license-Apache%202.0-0b57d0)](LICENSE)
 
 [**Download for Windows**](https://github.com/codevexx/harvest/releases/latest/download/Harvest-Setup.exe) &nbsp;·&nbsp;
 [Dashboard](https://harvest.codevexx.com/app) &nbsp;·&nbsp;
@@ -165,4 +166,13 @@ and public benchmarks. Website bots should only automate sites you own or are al
 
 ## Security
 
-Please report vulnerabilities privately, see [SECURITY.md](SECURITY.md).
+Please report vulnerabilities privately, see [SECURITY.md](SECURITY.md). Only download Harvest from
+[harvest.codevexx.com](https://harvest.codevexx.com) or this repository's
+[releases](https://github.com/codevexx/harvest/releases).
+
+## License
+
+Harvest's app and agent are licensed under the [Apache License 2.0](LICENSE). You can use, change and share
+the code, including commercially, as long as you keep the license and [NOTICE](NOTICE) and mark what you
+changed. The license does not cover the Harvest name or logo: forks need their own. The hosted service at
+harvest.codevexx.com is not part of this repository.
