@@ -33,7 +33,7 @@ except ImportError:
 
 from . import idle
 from . import runtimes as setup_mod
-from .runner import NO_WINDOW, _node_exe, _python_exe, cleanup, reset_discovery, run_job, task_dir
+from .runner import NO_WINDOW, _node_exe, _python_exe, cleanup, created_files, reset_discovery, run_job, task_dir
 
 CONFIG_PATH = Path(__file__).parent / "worker.config.json"
 
@@ -294,6 +294,7 @@ class Reporter:
         self.total = 0  # from {"progress": {"total": N}}
         self.kept = 0
         self.stride = 1
+        self.best: float | None = None
         self.status: str | None = None
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._loop, daemon=True)
@@ -303,7 +304,10 @@ class Reporter:
         with self.lock:
             self.done = max(self.done, i + 1)
             self.latest = e
-            if i % self.stride == 0:
+            best = self.best is None or reward > self.best
+            if best:
+                self.best = reward
+            if i % self.stride == 0 or best:  # new bests always reach the chart
                 self.episodes.append(e)
                 self.kept += 1
                 if self.kept >= 2000 - 1000 / self.stride:
@@ -568,12 +572,18 @@ def _run_job(client: Client, job: dict, cfg, mode, stop_event=None, status=None)
 
 
 def _upload_outputs(client: Client, job_id: str, log) -> None:
-    """Zip the task's outputs/ folder and upload it, if it has anything in it."""
+    """Zip the task's outputs/ folder and upload it, if it has anything in it.
+    A task that never used outputs/ gets the files it created kept instead."""
     import zipfile
     out = task_dir(job_id) / "outputs"
     files = [p for p in out.rglob("*") if p.is_file()] if out.is_dir() else []
     if not files:
-        return
+        files = created_files(job_id)
+        if not files:
+            return
+        out = task_dir(job_id)
+        names = ", ".join(p.relative_to(out).as_posix() for p in files[:5]) + (" ..." if len(files) > 5 else "")
+        log(f"nothing in outputs/, so keeping the files this task created: {names}")
     zpath = task_dir(job_id).parent / f"{job_id}-outputs.zip"
     try:
         with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as z:

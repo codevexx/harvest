@@ -308,6 +308,31 @@ def task_dir(job_id: str) -> Path:
     return WORK_ROOT / job_id
 
 
+START_MARK = ".harvest-started"
+_SKIP_DIRS = {"outputs", "node_modules", "__pycache__", ".git", ".venv", "venv"}
+
+
+def created_files(job_id: str, limit: int = 500) -> list[Path]:
+    """Files the task itself made or changed in its folder (outside outputs/),
+    for tasks that save results next to their script instead of in outputs/."""
+    work = task_dir(job_id)
+    try:
+        since = float((work / START_MARK).read_text())
+    except (OSError, ValueError):
+        return []
+    found = []
+    for p in work.rglob("*"):
+        rel = p.relative_to(work)
+        if (rel.parts[0] in _SKIP_DIRS or p.name == START_MARK or p.name.endswith(".tmp")
+                or not p.is_file() or p.is_symlink()):
+            continue
+        if p.stat().st_mtime >= since:
+            found.append(p)
+            if len(found) >= limit:
+                break
+    return found
+
+
 def cleanup(job_id: str) -> None:
     """Remove a finished task's folder (not done for paused tasks: they resume)."""
     shutil.rmtree(task_dir(job_id), ignore_errors=True)
@@ -361,6 +386,9 @@ def run_job(
         if sys.platform.startswith("win") and mode == "light":
             creationflags |= subprocess.BELOW_NORMAL_PRIORITY_CLASS  # type: ignore[attr-defined]
 
+        started = work / START_MARK
+        if not started.exists():  # first run only: a resumed task keeps its original start
+            started.write_text(str(time.time()))
         proc = subprocess.Popen(
             cmd, cwd=work, env=env, text=True, bufsize=1,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,

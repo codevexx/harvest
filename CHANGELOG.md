@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.5.2
+
+- **Results are kept even without `outputs/`.** If a task saves nothing into `outputs/`, the files it created
+  in its folder (a Q-table, a model, a CSV) are uploaded instead, so you can download them from the dashboard.
+- The chart's "Best" value is now exact on long runs (new best episodes are always sent).
+
 ## v0.5.1
 
 - Tasks get their "Expected steps" value in `HARVEST_STEPS`, so a script can loop the number of times you set in the dashboard.
