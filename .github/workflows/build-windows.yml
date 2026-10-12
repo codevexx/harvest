@@ -1,4 +1,4 @@
-name: Build Windows app
+name: Build and release
 
 # Builds Harvest.exe and the Harvest-Setup.exe installer on a Windows runner.
 # Pushing a tag like v0.2.0 also publishes both (plus .sha256 files) to a GitHub
@@ -96,4 +96,39 @@ jobs:
             dist/Harvest-Setup.exe.sha256
             dist/Harvest.exe
             dist/Harvest.exe.sha256
+          fail_on_unmatched_files: true
+
+  # macOS and Linux: the agent (worker/) as a tarball plus install.sh, each with a
+  # .sha256. install.sh and the agent's self-updater refuse files without a match.
+  agent:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Package the agent
+        run: |
+          mkdir -p dist pkg
+          v="${GITHUB_REF_NAME#v}"
+          [ "$GITHUB_REF_TYPE" = tag ] || v="0.0.0-dev"
+          printf '%s\n' "$v" > pkg/VERSION
+          mkdir -p pkg/worker
+          cp worker/*.py pkg/worker/
+          cp LICENSE NOTICE pkg/
+          pip install --quiet requests psutil
+          python3 -c "import sys; sys.path.insert(0, 'pkg'); import worker.agent, worker.daemon, worker.idle; print('imports ok')"
+          tar -czf dist/harvest-agent.tar.gz -C pkg .
+          cp install/install.sh dist/install.sh
+          sh -n dist/install.sh
+          cd dist && for f in harvest-agent.tar.gz install.sh; do sha256sum "$f" > "$f.sha256"; cat "$f.sha256"; done
+
+      - name: Publish to Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/harvest-agent.tar.gz
+            dist/harvest-agent.tar.gz.sha256
+            dist/install.sh
+            dist/install.sh.sha256
           fail_on_unmatched_files: true

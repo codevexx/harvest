@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.8.0
+
+- **macOS and Linux.** `curl -fsSL https://harvest.codevexx.com/install.sh | sh` installs the agent for your user
+  (no root) and runs it in the background: a LaunchAgent on macOS, a systemd user service on Linux (also at boot
+  on servers). It updates itself from GitHub Releases, checking each download's SHA-256. Idle detection works on
+  both (macOS input idle time; on Linux, GNOME, X11 or the login manager's idle hint, and a machine nobody is
+  logged in to counts as idle).
+- **Copies share their best results.** Tasks started with "Copies" or "Run on: Every machine" get
+  `HARVEST_COPY`, `HARVEST_COPIES`, `HARVEST_SHARE_URL` and `HARVEST_SHARE_TOKEN`, so copies on different PCs can
+  publish their best result and build on the best one found anywhere.
+
 ## v0.7.2
 
 - The background copy of Harvest now also repairs locked runtime folders while the Harvest app is open, so PCs

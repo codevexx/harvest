@@ -368,6 +368,14 @@ def run_job(
         env["HARVEST_OUTPUTS"] = str(work / "outputs")
         env["HARVEST_STEPS"] = str(spec.get("episodes_total") or "")  # "Expected steps" from the task
         env["HARVEST_PARAMS"] = json.dumps(spec.get("params") or {})  # this run's sweep values
+        env["HARVEST_JOB_ID"] = str(job.get("id", ""))
+        share = job.get("share") or {}
+        if share.get("url") and share.get("token"):  # copies started together can share results
+            env["HARVEST_SHARE_URL"] = str(share["url"])
+            env["HARVEST_SHARE_TOKEN"] = str(share["token"])
+            env["HARVEST_GROUP"] = str(share.get("group", ""))
+            env["HARVEST_COPY"] = str(share.get("copy", 0))
+            env["HARVEST_COPIES"] = str(share.get("copies", 1))
         # In "light" mode the user is at the machine: keep CPU use modest.
         cpu_budget = "2" if mode == "light" else "0"  # 0 => let the job decide
         env["FARM_CPU_BUDGET"] = cpu_budget

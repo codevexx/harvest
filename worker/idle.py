@@ -6,13 +6,16 @@ Modes:
     paused - a game / fullscreen app is running: do no work, pause jobs
     held   - the owner pressed Pause in the tray app: same as paused
 
-Windows is the primary target. The module still imports on macOS/Linux so
-you can develop the farm on your Mac; there idle/fullscreen detection is
-limited and it falls back to sensible defaults.
+Works on Windows, macOS and Linux. Fullscreen detection is Windows-only; on
+macOS and Linux add your games to the list so they always pause tasks.
 """
 from __future__ import annotations
 
+import re
+import shutil
+import subprocess
 import sys
+import time
 
 try:
     import psutil
@@ -20,6 +23,59 @@ except ImportError:  # psutil is required on workers; keep import soft for dev
     psutil = None  # type: ignore
 
 IS_WINDOWS = sys.platform.startswith("win")
+IS_MAC = sys.platform == "darwin"
+NOBODY = 10_000_000.0  # "idle" for a machine nobody is sitting at
+
+
+def _run(cmd: list[str], timeout: float = 3) -> str:
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def _mac_idle() -> float:
+    m = re.search(r'"HIDIdleTime" = (\d+)', _run(["ioreg", "-c", "IOHIDSystem", "-d", "4"]))
+    return int(m.group(1)) / 1e9 if m else NOBODY
+
+
+def _linux_sessions() -> list[dict]:
+    """Active local login sessions (graphical or console), from systemd-logind.
+    SSH sessions do not count: logging in remotely to a server is not using it."""
+    out = []
+    for line in _run(["loginctl", "list-sessions", "--no-legend"]).splitlines():
+        sid = line.split()[0] if line.split() else None
+        if not sid:
+            continue
+        props = dict(l.split("=", 1) for l in _run(["loginctl", "show-session", sid, "-p", "Type", "-p", "Active",
+                     "-p", "Remote", "-p", "IdleHint", "-p", "IdleSinceHintMonotonic"]).splitlines() if "=" in l)
+        if props.get("Active") == "yes" and props.get("Remote") != "yes" and props.get("Type") in ("x11", "wayland", "tty", "mir"):
+            out.append(props)
+    return out
+
+
+def _linux_idle() -> float:
+    sessions = _linux_sessions()
+    if not sessions:
+        return NOBODY  # a server, or nobody logged in at the machine
+    # GNOME (Wayland or X11) reports exact idle time over D-Bus.
+    m = re.search(r"uint64 (\d+)", _run(["gdbus", "call", "--session", "--dest", "org.gnome.Mutter.IdleMonitor",
+                                          "--object-path", "/org/gnome/Mutter/IdleMonitor/Core",
+                                          "--method", "org.gnome.Mutter.IdleMonitor.GetIdletime"]))
+    if m:
+        return int(m.group(1)) / 1000
+    if shutil.which("xprintidle"):
+        v = _run(["xprintidle"]).strip()
+        if v.isdigit():
+            return int(v) / 1000
+    # Otherwise the desktop's idle hint (set when the screen locks or blanks).
+    for s in sessions:
+        if s.get("IdleHint") == "yes" and s.get("IdleSinceHintMonotonic", "0").isdigit():
+            return max(0.0, time.monotonic() - int(s["IdleSinceHintMonotonic"]) / 1e6)
+    return 0.0
+
+
+_cache = {"t": 0.0, "v": 0.0}
 
 
 # --- seconds since the user last touched keyboard/mouse ------------------
@@ -37,8 +93,12 @@ def idle_seconds() -> float:
             millis = ctypes.windll.kernel32.GetTickCount() - info.dwTime
             return millis / 1000.0
         return 0.0
-    # Non-Windows dev fallback: pretend the machine is idle so jobs still run.
-    return 10_000.0
+    # macOS / Linux ask other programs, so remember the answer for a few seconds.
+    now = time.monotonic()
+    if now - _cache["t"] > 5:
+        _cache["v"] = _mac_idle() if IS_MAC else _linux_idle() if sys.platform.startswith("linux") else NOBODY
+        _cache["t"] = now
+    return _cache["v"]
 
 
 # --- is a game / fullscreen app in the foreground ------------------------
@@ -82,8 +142,10 @@ def foreground_is_fullscreen() -> bool:
 def someone_signed_in() -> bool:
     """True if any user has an active Windows session (console or remote desktop).
     Used in background mode, which runs before sign-in and cannot see input."""
+    if IS_MAC:
+        return True  # the Mac agent runs inside the signed-in user's session
     if not IS_WINDOWS:
-        return False
+        return bool(_linux_sessions())
     import ctypes
     from ctypes import wintypes
 

@@ -12,7 +12,7 @@ to reinforcement learning, and usable by your AI assistant through an API.
 
 [![Latest release](https://img.shields.io/github/v/release/codevexx/harvest?label=release&color=0b57d0)](https://github.com/codevexx/harvest/releases/latest)
 [![Build](https://img.shields.io/github/actions/workflow/status/codevexx/harvest/build-windows.yml?label=windows%20build)](https://github.com/codevexx/harvest/actions/workflows/build-windows.yml)
-![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0b57d0)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0b57d0)
 ![Python](https://img.shields.io/badge/python-3.11%2B-3776ab)
 [![License](https://img.shields.io/badge/license-Apache%202.0-0b57d0)](LICENSE)
 
@@ -147,6 +147,19 @@ Each agent decides every few seconds whether its machine is free:
 Your code and data run only on your machines. The service stores your account, the queue, task files you
 upload, and the progress your tasks report.
 
+## macOS and Linux
+
+```bash
+curl -fsSL https://harvest.codevexx.com/install.sh | sh
+```
+
+It asks for your connect token (dashboard: Machines > Connect a machine), installs the agent for your user
+(no root), and runs it in the background: a LaunchAgent on macOS, a systemd user service on Linux (which
+also starts at boot on servers). It updates itself from GitHub Releases and checks every download's SHA-256.
+Needs Python 3.10+. Remove it with `curl -fsSL https://harvest.codevexx.com/install.sh | sh -s -- --uninstall`.
+Power modes, sharing between copies and everything else work the same as on Windows; pausing for games
+works by program name (add your games in the config), as fullscreen detection is Windows-only.
+
 ## Run from source (macOS, Linux, Windows)
 
 ```bash
@@ -158,7 +171,6 @@ python -m worker.agent --coordinator https://harvest.codevexx.com --token YOUR_T
 ```
 
 For website bots: `pip install playwright && python -m playwright install chromium`.
-A Linux tray app is planned.
 
 ## Repository layout
 
