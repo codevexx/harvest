@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.10.0
+
+- **Live machine stats.** Harvest now reports each machine's CPU, memory and GPU load, so the new dashboard can
+  show live gauges and history for every machine. Update Harvest on each machine to see its stats.
+
 ## v0.9.3
 
 - **New look.** The Harvest app's panel matches the redesigned website and dashboard: dark, sharp and

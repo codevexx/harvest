@@ -133,6 +133,47 @@ def detect_specs() -> dict:
     }
 
 
+# --- machine load, shown live on the dashboard ----------------------------
+
+class Telemetry:
+    """CPU, memory and GPU use in percent. GPU: NVIDIA via nvidia-smi, Macs via
+    the GPU's own statistics; checked at most every 10 s (it runs a program)."""
+
+    def __init__(self):
+        self._gpu, self._gpu_t = None, 0.0
+        if psutil is not None:
+            psutil.cpu_percent(None)  # start the measuring window
+
+    def _gpu_util(self):
+        if time.monotonic() - self._gpu_t < 10:
+            return self._gpu
+        self._gpu_t, val = time.monotonic(), None
+        try:
+            if sys.platform == "darwin":
+                out = subprocess.run(["ioreg", "-r", "-d", "1", "-w", "0", "-c", "IOAccelerator"],
+                                     capture_output=True, text=True, timeout=5).stdout
+                m = re.search(r'"Device Utilization %"=(\d+)', out)
+                val = int(m.group(1)) if m else None
+            else:
+                out = subprocess.run(["nvidia-smi", "--query-gpu=utilization.gpu", "--format=csv,noheader,nounits"],
+                                     capture_output=True, text=True, timeout=5, creationflags=NO_WINDOW).stdout
+                val = int(out.split()[0]) if out.strip() else None
+        except (OSError, ValueError, IndexError, subprocess.SubprocessError):
+            val = None
+        self._gpu = val
+        return val
+
+    def sample(self) -> dict:
+        d = {}
+        if psutil is not None:
+            d["cpu"] = round(psutil.cpu_percent(None))
+            d["mem"] = round(psutil.virtual_memory().percent)
+        g = self._gpu_util()
+        if g is not None:
+            d["gpu"] = g
+        return d
+
+
 # --- coordinator client (cloud or local) --------------------------------
 
 IDLE_POLL = 15      # seconds between check-ins while idle
@@ -186,6 +227,14 @@ class Client:
         self.farm = data.get("farm")
         return self.worker_id
 
+    tele = None  # callable returning {"cpu", "mem", "gpu"} for the dashboard's live graphs
+
+    def _tele(self) -> dict:
+        try:
+            return self.tele() if self.tele else {}
+        except Exception:
+            return {}
+
     # Power mode chosen on the dashboard or in the tray app ("full", "light",
     # "paused" or None = automatic). The server keeps it; a change made on this PC
     # is sent along with the next check-in until the server has it.
@@ -214,7 +263,7 @@ class Client:
 
     def heartbeat(self, mode, status, cfg=None) -> bool:
         if self.cloud:
-            body = {"worker_id": self.worker_id, "mode": mode, "status": status}
+            body = {"worker_id": self.worker_id, "mode": mode, "status": status, **self._tele()}
             o = self._override_param(cfg)
             if o:
                 body["override"] = o
@@ -233,7 +282,8 @@ class Client:
         """Check in (mode doubles as the heartbeat) and claim a task if one is waiting."""
         g = str(has_gpu).lower()
         if self.cloud:
-            params = {"worker_id": self.worker_id, "has_gpu": g, "mode": mode, "runtimes": ",".join(runtimes) or "none"}
+            params = {"worker_id": self.worker_id, "has_gpu": g, "mode": mode, "runtimes": ",".join(runtimes) or "none",
+                      **self._tele()}
             o = self._override_param(cfg)
             if o:
                 params["override"] = o
@@ -260,7 +310,7 @@ class Client:
                 self.log(job_id, line)
             return None
         body = {"job_id": job_id, "worker_id": self.worker_id, "mode": mode,
-                "episodes": episodes, "logs": logs, "episodes_done": episodes_done, "total": total}
+                "episodes": episodes, "logs": logs, "episodes_done": episodes_done, "total": total, **self._tele()}
         o = self._override_param(cfg)
         if o:
             body["override"] = o
@@ -506,6 +556,7 @@ def run_agent(cfg: dict, stop_event=None, on_status=None, on_info=None) -> None:
     has_gpu = specs["has_gpu"]
     runtimes = specs["runtimes"]  # may be empty: then this PC takes no tasks
     client = Client(cfg["coordinator"], cfg.get("token"))
+    client.tele = Telemetry().sample
 
     # Missing Python / Node.js / website support? Install it in the background
     # (worker/runtimes.py) and tell the server what this PC can run once done.
