@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.9.1
+
+- **New icon.** A redrawn Harvest leaf for the Windows and Mac apps, the Windows tray, the Mac menu bar and both
+  installers.
+- **Mac installer window.** Harvest-mac.dmg now opens a proper "Install Harvest" window: drag the app onto the
+  Applications folder.
+- **Branded Windows setup.** Harvest-Setup.exe shows the Harvest artwork instead of the generic installer images.
+
 ## v0.9.0
 
 - **Harvest for Mac.** A menu bar app for Macs with Apple silicon: status, power mode, pause, the dashboard,

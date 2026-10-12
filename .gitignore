@@ -46,3 +46,8 @@ desktop/mac/menubar.png
 desktop/mac/Harvest.icns
 desktop/mac/build/
 desktop/mac/dist/
+desktop/mac/dmg_background.png
+desktop/mac/dmg_background@2x.png
+desktop/mac/dmg_background.tiff
+desktop/wizard_small_*.bmp
+desktop/wizard_side_*.bmp

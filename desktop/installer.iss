@@ -28,6 +28,9 @@ SetupIconFile=harvest.ico
 UninstallDisplayIcon={app}\Harvest.exe
 UninstallDisplayName=Harvest
 WizardStyle=modern
+; Branded wizard art (make_icon.py), one file per display scaling
+WizardSmallImageFile=wizard_small_0.bmp,wizard_small_1.bmp,wizard_small_2.bmp,wizard_small_3.bmp,wizard_small_4.bmp,wizard_small_5.bmp,wizard_small_6.bmp
+WizardImageFile=wizard_side_0.bmp,wizard_side_1.bmp,wizard_side_2.bmp,wizard_side_3.bmp,wizard_side_4.bmp,wizard_side_5.bmp,wizard_side_6.bmp
 WizardSizePercent=100
 Compression=lzma2/max
 SolidCompression=yes

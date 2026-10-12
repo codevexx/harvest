@@ -88,11 +88,10 @@ def ui_html() -> str:
 # --- tray icon image -----------------------------------------------------
 
 def tray_image(status: str) -> Image.Image:
-    """Amber leaf with a small status badge, drawn at 64px."""
-    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+    """The Harvest leaf with a small status badge, at 64px."""
+    from icon_art import tray_leaf
+    img = tray_leaf(64)
     d = ImageDraw.Draw(img)
-    d.polygon([(32, 4), (54, 34), (32, 60), (10, 34)], fill=(240, 165, 59, 255))
-    d.ellipse([12, 20, 52, 60], fill=(240, 165, 59, 255))
     color = DOT.get(status, DOT["offline"])
     d.ellipse([36, 36, 63, 63], fill=(255, 255, 255, 255))
     d.ellipse([40, 40, 59, 59], fill=color + (255,))
