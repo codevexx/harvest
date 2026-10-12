@@ -1,9 +1,10 @@
 # dmgbuild settings for Harvest-mac.dmg:
-#   dmgbuild -s dmg_settings.py -D app=path/to/Harvest.app Harvest Harvest-mac.dmg
+#   dmgbuild -s dmg_settings.py -D app=path/to/Harvest.app -D art=path/to/desktop/mac Harvest Harvest-mac.dmg
+# (dmgbuild does not tell this file where it lives, so the art folder is passed in.)
 import os
 
 app = defines.get("app", "Harvest.app")  # noqa: F821 (provided by dmgbuild)
-here = os.path.dirname(os.path.abspath(globals().get("__file__", "dmg_settings.py")))
+here = defines.get("art", ".")  # noqa: F821
 
 format = "UDZO"
 size = None

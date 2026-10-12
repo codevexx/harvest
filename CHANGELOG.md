@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.9.2
+
+- Harvest-mac.dmg with the new "Install Harvest" window (the 0.9.1 Mac build did not finish). Everything else
+  is as in 0.9.1.
+
 ## v0.9.1
 
 - **New icon.** A redrawn Harvest leaf for the Windows and Mac apps, the Windows tray, the Mac menu bar and both

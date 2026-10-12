@@ -167,7 +167,7 @@ jobs:
           ditto -c -k --keepParent Harvest.app Harvest-mac.zip
           # The installer window: background art, drag arrow, Applications shortcut, disk icon.
           (cd ../desktop/mac && python make_dmg_background.py && tiffutil -cathidpicheck dmg_background.png dmg_background@2x.png -out dmg_background.tiff)
-          dmgbuild -s ../desktop/mac/dmg_settings.py -D app="$PWD/Harvest.app" Harvest Harvest-mac.dmg
+          dmgbuild -s ../desktop/mac/dmg_settings.py -D app="$PWD/Harvest.app" -D art="$(cd ../desktop/mac && pwd)" Harvest Harvest-mac.dmg
           hdiutil verify Harvest-mac.dmg
           for f in Harvest-mac.zip Harvest-mac.dmg; do shasum -a 256 "$f" > "$f.sha256"; cat "$f.sha256"; done
 
