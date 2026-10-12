@@ -56,6 +56,12 @@
   .tile .v{font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
   .acts{display:flex;gap:8px;margin-top:12px}
+  .pwr{display:flex;align-items:center;gap:10px;margin-top:8px;background:var(--surface);border-radius:16px;padding:5px 5px 5px 14px}
+  .pwr .k{font-size:12px;color:var(--on-var);flex:none}
+  .seg{flex:1;display:flex;gap:2px}
+  .seg button{flex:1;height:30px;border:0;border-radius:15px;background:transparent;color:var(--on-var);font:600 13px inherit;font-family:inherit;cursor:pointer}
+  .seg button:hover{background:color-mix(in srgb,var(--on) 8%,transparent)}
+  .seg button.on{background:var(--sec-c);color:var(--on-sec-c)}
   .btn{height:40px;border-radius:20px;border:0;padding:0 18px;display:inline-flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;font-weight:600;font-size:14px;flex:1;position:relative;overflow:hidden}
   .btn::after{content:"";position:absolute;inset:0;background:currentColor;opacity:0;transition:opacity .15s}
   .btn:hover::after{opacity:.08}
@@ -154,6 +160,14 @@
       <div class="tile"><div class="k">Finished</div><div class="v" id="t-done"></div></div>
       <div class="tile"><div class="k">Can run</div><div class="v" id="t-rt"></div></div>
     </div>
+    <div class="pwr" title="Auto: full power when you are away, light while you use the PC. Games always pause tasks.">
+      <span class="k">Power</span>
+      <div class="seg" id="pwr" role="group" aria-label="Power mode">
+        <button data-p="auto" onclick="setPower('auto')" title="Full power when you are away, light while you use the PC">Auto</button>
+        <button data-p="full" onclick="setPower('full')" title="Use the whole PC, even while you are using it (still pauses for games)">Full</button>
+        <button data-p="light" onclick="setPower('light')" title="Always run gently, using 2 CPU threads">Light</button>
+      </div>
+    </div>
     <div class="acts">
       <button class="btn tonal" id="pauseBtn" onclick="togglePause()"></button>
       <button class="btn outlined" onclick="call('open_dashboard')"><svg class="i"><use href="#open"/></svg>Dashboard</button>
@@ -242,6 +256,9 @@ function renderHome(s) {
   $("#t-name").textContent = s.name; $("#t-farm").textContent = s.farm || "-";
   $("#t-done").textContent = s.finished + (s.finished === 1 ? " task" : " tasks");
   $("#t-rt").textContent = (s.runtimes || []).map(function (r) { return RT[r] || r; }).join(", ") || "-";
+  document.querySelectorAll("#pwr button").forEach(function (b) { var on = b.dataset.p === (s.power || "auto"); b.classList.toggle("on", on); b.setAttribute("aria-pressed", on); });
+  if (!s.user_paused && st.mode !== "paused" && s.power && s.power !== "auto") sub = s.power === "full" ? "Full power, set by you" : "Light, set by you";
+  $("#subline").textContent = sub;
   $("#pauseBtn").innerHTML = s.user_paused ? '<svg class="i"><use href="#play"/></svg>Resume' : '<svg class="i"><use href="#pause"/></svg>Pause';
 
   var u = s.update || {}, b = $("#upd");
@@ -307,6 +324,7 @@ function connect() {
   });
 }
 function togglePause() { call("set_paused", !S.user_paused); }
+function setPower(p) { call("set_power", p); }
 
 window.addEventListener("blur", function () { call("on_blur"); });
 document.addEventListener("keydown", function (e) { if (e.key === "Escape") call("hide"); });

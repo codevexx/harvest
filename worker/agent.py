@@ -158,23 +158,58 @@ class Client:
         self.farm = data.get("farm")
         return self.worker_id
 
-    def heartbeat(self, mode, status) -> None:
+    # Power mode chosen on the dashboard or in the tray app ("full", "light",
+    # "paused" or None = automatic). The server keeps it; a change made on this PC
+    # is sent along with the next check-in until the server has it.
+    server_override = None
+
+    def _override_param(self, cfg):
+        if cfg is not None and cfg.get("override_dirty"):
+            return cfg.get("mode_override") or "auto"
+        return None
+
+    def sync_override(self, cfg, data) -> bool:
+        """Apply the server's power mode to cfg. Returns True if it changed."""
+        if cfg is None or not isinstance(data, dict) or "override" not in data:
+            return False
+        value = data.get("override")
+        value = value if value in idle.POWER_MODES else None
+        self.server_override = value
+        if cfg.get("override_dirty"):
+            if value == cfg.get("mode_override"):
+                cfg["override_dirty"] = False  # the server has our change
+            return False
+        if value != cfg.get("mode_override"):
+            cfg["mode_override"] = value
+            return True
+        return False
+
+    def heartbeat(self, mode, status, cfg=None) -> bool:
         if self.cloud:
-            r = self.s.post(f"{self.base}/api/agent/heartbeat",
-                            json={"worker_id": self.worker_id, "mode": mode, "status": status}, timeout=15)
+            body = {"worker_id": self.worker_id, "mode": mode, "status": status}
+            o = self._override_param(cfg)
+            if o:
+                body["override"] = o
+            r = self.s.post(f"{self.base}/api/agent/heartbeat", json=body, timeout=15)
             if r.status_code == 404:
                 raise ReRegister()
+            try:
+                return self.sync_override(cfg, r.json())
+            except ValueError:
+                return False
         else:
             self.s.post(f"{self.base}/api/workers/{self.worker_id}/heartbeat",
                         json={"mode": mode, "status": status}, timeout=15)
 
-    def next_job(self, has_gpu, runtimes=("python",), mode="full") -> dict | None:
+    def next_job(self, has_gpu, runtimes=("python",), mode="full", cfg=None) -> dict | None:
         """Check in (mode doubles as the heartbeat) and claim a task if one is waiting."""
         g = str(has_gpu).lower()
         if self.cloud:
-            r = self.s.get(f"{self.base}/api/agent/next",
-                           params={"worker_id": self.worker_id, "has_gpu": g, "mode": mode,
-                                   "runtimes": ",".join(runtimes) or "none"}, timeout=15)
+            params = {"worker_id": self.worker_id, "has_gpu": g, "mode": mode, "runtimes": ",".join(runtimes) or "none"}
+            o = self._override_param(cfg)
+            if o:
+                params["override"] = o
+            r = self.s.get(f"{self.base}/api/agent/next", params=params, timeout=15)
             if r.status_code == 404:
                 raise ReRegister()
         else:
@@ -182,9 +217,12 @@ class Client:
                            params={"has_gpu": g}, timeout=15)
         data = r.json()
         self.poll_hint = data.get("poll")  # server: "work is waiting, ask again in N s"
+        self.override_changed = self.sync_override(cfg, data)
+        if self.override_changed and data.get("override") == "paused":
+            return None  # paused from the dashboard: take nothing
         return data.get("job")
 
-    def progress(self, job_id, mode, episodes, logs, episodes_done, total=0) -> str | None:
+    def progress(self, job_id, mode, episodes, logs, episodes_done, total=0, cfg=None) -> str | None:
         """Send a batch of chart points and output lines. Returns the task's status
         on the server (e.g. 'cancelled'), or None if it could not be sent."""
         if not self.cloud:  # the old LAN coordinator takes them one by one
@@ -193,10 +231,14 @@ class Client:
             for line in logs:
                 self.log(job_id, line)
             return None
-        r = self.s.post(f"{self.base}/api/agent/progress", timeout=20, json={
-            "job_id": job_id, "worker_id": self.worker_id, "mode": mode,
-            "episodes": episodes, "logs": logs, "episodes_done": episodes_done, "total": total})
-        return r.json().get("status")
+        body = {"job_id": job_id, "worker_id": self.worker_id, "mode": mode,
+                "episodes": episodes, "logs": logs, "episodes_done": episodes_done, "total": total}
+        o = self._override_param(cfg)
+        if o:
+            body["override"] = o
+        data = self.s.post(f"{self.base}/api/agent/progress", timeout=20, json=body).json()
+        self.sync_override(cfg, data)  # e.g. "paused" from the dashboard stops this task
+        return data.get("status")
 
     MAX_BUNDLE = 250 * 1024 * 1024  # never unpack an upload past this (zip-bomb guard)
 
@@ -300,6 +342,7 @@ class Reporter:
 
     def __init__(self, client: "Client", job_id: str, mode_fn):
         self.client, self.job_id, self.mode_fn = client, job_id, mode_fn
+        self.cfg = None  # set by _run_job so progress replies can carry the power mode
         self.lock = threading.Lock()
         self.episodes: list[dict] = []
         self.logs: list[str] = []
@@ -348,7 +391,7 @@ class Reporter:
             self.episodes, self.logs, self.skipped_logs, done = [], [], 0, self.done
         send, later = eps[:300], eps[300:]  # the server takes 300 per update
         try:
-            status = self.client.progress(self.job_id, self.mode_fn(), send, logs, done, self.total)
+            status = self.client.progress(self.job_id, self.mode_fn(), send, logs, done, self.total, cfg=self.cfg)
             if status:
                 self.status = status
         except (requests.RequestException, ValueError):
@@ -429,6 +472,7 @@ def run_agent(cfg: dict, stop_event=None, on_status=None, on_info=None) -> None:
         stop_event.wait(secs) if stop_event else time.sleep(secs)
 
     specs = detect_specs()
+    specs["agent_version"] = cfg.get("app_version")
     has_gpu = specs["has_gpu"]
     runtimes = specs["runtimes"]  # may be empty: then this PC takes no tasks
     client = Client(cfg["coordinator"], cfg.get("token"))
@@ -490,6 +534,7 @@ def run_agent(cfg: dict, stop_event=None, on_status=None, on_info=None) -> None:
             if setup_done.is_set():  # new runtimes installed: report them
                 setup_done.clear()
                 specs = detect_specs()
+                specs["agent_version"] = cfg.get("app_version")
                 runtimes = specs["runtimes"]
                 if not connect():
                     return
@@ -503,9 +548,13 @@ def run_agent(cfg: dict, stop_event=None, on_status=None, on_info=None) -> None:
                 last_poll, last_mode = now, mode
                 job = None
                 if mode in ("paused", "held"):
-                    client.heartbeat(mode, "idle")
+                    changed = client.heartbeat(mode, "idle", cfg)
                 else:
-                    job = client.next_job(has_gpu, runtimes, mode)
+                    job = client.next_job(has_gpu, runtimes, mode, cfg)
+                    changed = getattr(client, "override_changed", False)
+                if changed:  # power mode changed on the dashboard
+                    info(override=cfg.get("mode_override"))
+                    last_mode = None
                 if job:
                     _run_job(client, job, cfg, mode, stop_event, status)
                     quiet_since, last_poll = time.monotonic(), 0.0  # look for more work right away
@@ -545,6 +594,7 @@ def _run_job(client: Client, job: dict, cfg, mode, stop_event=None, status=None)
     if status:
         status(mode, "busy", job.get("name"))
     reporter = Reporter(client, job_id, lambda: idle.get_mode(cfg))
+    reporter.cfg = cfg
     reporter.start()
 
     if job["spec"].get("files_key"):  # too big to send inline: fetch the bundle

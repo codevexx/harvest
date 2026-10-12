@@ -35,3 +35,8 @@ dist/
 /CLAUDE.md
 /graphify-out/
 /.graphifyignore
+
+# local virtualenvs for examples
+examples/*/.venv/
+examples/*/outputs/
+examples/*/my_run.json

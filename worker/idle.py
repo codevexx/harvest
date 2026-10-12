@@ -105,11 +105,23 @@ def someone_signed_in() -> bool:
 
 # --- the one call the agent uses -----------------------------------------
 
+POWER_MODES = ("full", "light", "paused")
+
+
 def get_mode(cfg: dict) -> str:
     """cfg keys: idle_threshold (s), games (list[str]), pause_on_fullscreen (bool),
-    user_paused (bool, set from the tray app's Pause button)."""
-    if cfg.get("user_paused"):
+    mode_override ("full" | "light" | "paused" | None = automatic; set from the
+    tray app or the dashboard), user_paused (older Pause button)."""
+    override = cfg.get("mode_override")
+    if override == "paused" or cfg.get("user_paused"):
         return "held"  # like paused, but shown as "paused by you"
+    auto = _auto_mode(cfg)
+    if auto == "paused":
+        return "paused"  # a game always wins, even over "full power"
+    return override if override in ("full", "light") else auto
+
+
+def _auto_mode(cfg: dict) -> str:
     if cfg.get("headless"):
         # Background mode (before sign-in) cannot see the user's keyboard or
         # windows, so: games by name pause, anyone signed in means light.

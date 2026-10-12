@@ -67,7 +67,10 @@ def load_config() -> dict:
             cfg.update(json.loads(CONFIG_PATH.read_text(encoding="utf-8")))
     except Exception:
         pass
-    cfg["user_paused"] = False  # a pause never survives a restart
+    cfg["user_paused"] = False  # older setting; the power mode below replaced it
+    cfg["app_version"] = __version__  # shown on the dashboard
+    cfg.pop("mode_override", None)  # the power mode lives on the server; the agent fetches it
+    cfg.pop("override_dirty", None)
     return cfg
 
 
@@ -113,6 +116,9 @@ class Api:
 
     def set_paused(self, paused):
         self._app.set_paused(bool(paused))
+
+    def set_power(self, mode):
+        self._app.set_power(str(mode))
 
     def open_dashboard(self):
         webbrowser.open(self._app.cfg["coordinator"].rstrip("/") + "/app")
@@ -189,7 +195,7 @@ class App:
             "autostart": winutil.get_autostart(), "can_autostart": IS_WIN and FROZEN,
             "service": self.service_on, "service_busy": self.service_busy,
             "status": {"mode": self.mode, "state": self.state, "detail": self.detail},
-            "user_paused": c.get("user_paused", False), "finished": self.finished,
+            "user_paused": c.get("mode_override") == "paused", "power": self.power(), "finished": self.finished,
             "runtimes": self.runtimes, "update": self.updater.snapshot(),
             "website": dict(self.website, ready="browser" in self.runtimes),
             "setup": self.setup, "setup_problems": self.setup_problems,
@@ -200,7 +206,7 @@ class App:
         """Send the latest state to the flyout and refresh the tray icon."""
         if self.icon is not None:
             try:
-                key = "busy" if self.state == "busy" else ("held" if self.cfg.get("user_paused") else self.mode)
+                key = "busy" if self.state == "busy" else ("held" if self.cfg.get("mode_override") == "paused" else self.mode)
                 self.icon.icon = tray_image(key)
                 self.icon.title = f"{APP_NAME}: " + {
                     "busy": f"running {self.detail or 'a task'}", "full": "ready, idle",
@@ -237,7 +243,9 @@ class App:
             self.setup = info["setup"]
         if "setup_problems" in info:
             self.setup_problems = info["setup_problems"] or []
-        self.push()
+        if info.get("override") in ("full", "light"):
+            self.cfg["last_power"] = info["override"]
+        self.push()  # "override": the power mode was changed on the dashboard
 
     def start_agent(self):
         if not self.cfg.get("token"):
@@ -273,9 +281,34 @@ class App:
 
     # --- actions ---
 
-    def set_paused(self, paused: bool):
-        self.cfg["user_paused"] = paused  # the agent reads this live via idle.get_mode
+    def power(self) -> str:
+        """The Auto / Full / Light choice (kept while paused, so Resume restores it)."""
+        o = self.cfg.get("mode_override")
+        if o in ("full", "light"):
+            return o
+        return self.cfg.get("last_power", "auto") if o == "paused" else "auto"
+
+    def _set_override(self, value):
+        # The agent reads cfg live (idle.get_mode) and sends the change to the server
+        # with its next check-in, so the dashboard shows it too.
+        self.cfg["mode_override"] = value
+        self.cfg["override_dirty"] = True
         self.push()
+
+    def set_power(self, mode: str):
+        mode = mode if mode in ("full", "light") else "auto"
+        self.cfg["last_power"] = mode
+        if self.cfg.get("mode_override") != "paused":
+            self._set_override(None if mode == "auto" else mode)
+        else:
+            self.push()  # stays paused; Resume uses the new choice
+
+    def set_paused(self, paused: bool):
+        if paused:
+            self._set_override("paused")
+        else:
+            last = self.cfg.get("last_power", "auto")
+            self._set_override(None if last == "auto" else last)
 
     def save_settings(self, data: dict) -> str | None:
         c = self.cfg
@@ -386,8 +419,8 @@ class App:
         return pystray.Menu(
             Item("Open Harvest", self.toggle_flyout, default=True),
             Item("Open dashboard", lambda *_: webbrowser.open(self.cfg["coordinator"].rstrip("/") + "/app")),
-            Item(lambda _: "Resume" if self.cfg.get("user_paused") else "Pause",
-                 lambda *_: self.set_paused(not self.cfg.get("user_paused"))),
+            Item(lambda _: "Resume" if self.cfg.get("mode_override") == "paused" else "Pause",
+                 lambda *_: self.set_paused(self.cfg.get("mode_override") != "paused")),
             pystray.Menu.SEPARATOR,
             Item("Quit", lambda *_: threading.Thread(target=self.quit, daemon=True).start()),
         )

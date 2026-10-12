@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.7.0
+
+- **Choose each PC's power mode.** Auto (as before), Full power, Light or Paused, from the Harvest app on the PC
+  or from the machine's card on the dashboard. They stay in sync. Full power uses the whole PC even when someone
+  is signed in (useful for a server that is always signed in but idle); games still pause tasks. Paused from the
+  dashboard stops a running task within seconds and puts it back in the queue.
+
 ## v0.6.0
 
 - **Continue on any machine.** When a task is paused (say, a game starts), Harvest saves what it has written so
