@@ -58,12 +58,15 @@ def detect_gpu() -> tuple[str | None, bool]:
 def detect_runtimes() -> list[str]:
     """Which task kinds this machine can run: python, node, browser."""
     found = []
-    if _python_exe():  # None if the PC has no real Python (never the Store placeholder)
-        found.append("python")
-    if setup_mod.playwright_python(_python_exe):  # user's Python with Playwright, or Harvest's own
-        found.append("browser")
-    if _node_exe():
-        found.append("node")
+    checks = (("python", _python_exe),  # None if the PC has no real Python (never the Store placeholder)
+              ("browser", lambda: setup_mod.playwright_python(_python_exe)),  # user's Python with Playwright, or Harvest's own
+              ("node", _node_exe))
+    for kind, check in checks:
+        try:
+            if check():
+                found.append(kind)
+        except Exception as e:  # one unreadable runtime must never stop the agent connecting
+            print(f"could not check {kind}: {e}")
     return found
 
 
@@ -471,6 +474,8 @@ def run_agent(cfg: dict, stop_event=None, on_status=None, on_info=None) -> None:
     def wait(secs):
         stop_event.wait(secs) if stop_event else time.sleep(secs)
 
+    if setup_mod.supported():
+        setup_mod.repair_permissions()
     specs = detect_specs()
     specs["agent_version"] = cfg.get("app_version")
     has_gpu = specs["has_gpu"]

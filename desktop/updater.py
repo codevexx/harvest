@@ -165,7 +165,12 @@ class Updater:
         self._file.unlink(missing_ok=True)
         if self.relaunch:
             flags = 0x00000008 | 0x00000200 if sys.platform.startswith("win") else 0  # DETACHED | NEW_GROUP
-            subprocess.Popen([str(exe), "--updated"], creationflags=flags, close_fds=True)
+            # A fresh environment for the new copy: otherwise PyInstaller treats it as part of
+            # this (exiting) process and it loads files from our temporary folder, which
+            # disappears as we quit (seen as "_cffi_backend" / ClrLoader.dll errors).
+            env = {k: v for k, v in os.environ.items() if not k.startswith(("_MEI", "_PYI"))}
+            env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+            subprocess.Popen([str(exe), "--updated"], creationflags=flags, close_fds=True, env=env)
         return True
 
     # --- background loop --------------------------------------------------

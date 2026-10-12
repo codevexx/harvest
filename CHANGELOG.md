@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.7.1
+
+- Fixed: the Harvest app could stay on "Connecting" after the background copy had installed Python (the folder
+  was readable only by the background copy). Existing installs are repaired automatically.
+- Fixed: an error window after Harvest restarted itself for an update.
+- One unreadable runtime can no longer stop Harvest from connecting; the app shows the error instead.
+
 ## v0.7.0
 
 - **Choose each PC's power mode.** Auto (as before), Full power, Light or Paused, from the Harvest app on the PC

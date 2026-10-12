@@ -260,7 +260,12 @@ class App:
             while winutil.mutex_exists(winutil.HEADLESS_AGENT) and time.monotonic() < deadline:
                 if stop.wait(1):
                     return
-            run_agent(self.cfg, stop, self._on_status, self._on_info)
+            try:
+                run_agent(self.cfg, stop, self._on_status, self._on_info)
+            except Exception as e:  # show it instead of "connecting" forever
+                import traceback
+                traceback.print_exc()
+                self._on_status("offline", "idle", f"error: {e}")
 
         self.thread = threading.Thread(target=go, daemon=True)
         self.thread.start()

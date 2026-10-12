@@ -23,7 +23,6 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 import zipfile
 from pathlib import Path
@@ -44,8 +43,15 @@ def root() -> Path:
     return Path(os.environ.get("LOCALAPPDATA") or Path.home() / ".harvest") / "Harvest" / "runtimes"
 
 
+def _ready(d: Path) -> bool:
+    try:
+        return (d / ".harvest-ready").exists()
+    except OSError:  # unreadable (see repair_permissions): treat as not installed
+        return False
+
+
 def _latest_ready(prefix: str) -> Path | None:
-    dirs = [d for d in root().glob(prefix + "-*") if (d / ".harvest-ready").exists()]
+    dirs = [d for d in root().glob(prefix + "-*") if _ready(d)]
     key = lambda d: tuple(int(x) for x in re.findall(r"\d+", d.name.split("-", 1)[1])[:3])
     return max(dirs, key=key) if dirs else None
 
@@ -108,9 +114,14 @@ def _install(name: str, version: str, build: Callable[[Path, Path], None], log) 
     """Build into a temporary folder, then move it into place in one step."""
     root().mkdir(parents=True, exist_ok=True)
     final = root() / f"{name}-{version}"
-    if (final / ".harvest-ready").exists():
+    if _ready(final):
         return final
-    work = Path(tempfile.mkdtemp(prefix=f"{name}-", dir=root()))
+    # A plain folder, not tempfile.mkdtemp: from Python 3.13, mkdtemp folders on
+    # Windows only allow the creating logon session, and that would follow the
+    # runtime when it is moved into place (the tray app then could not read a
+    # runtime the background copy installed).
+    work = root() / f".{name}-{os.getpid()}-{int(time.time() * 1000)}"
+    work.mkdir()
     try:
         build(work, work / "out")
         shutil.rmtree(final, ignore_errors=True)
@@ -211,6 +222,32 @@ def install_playwright(python: str, log) -> None:
                 last = time.monotonic()
         if p.wait() != 0:
             raise RuntimeError(f"{label} failed")
+
+
+# --- permissions repair ------------------------------------------------------------
+
+ACL_MARK = ".permissions-ok-1"
+
+
+def repair_permissions(log=print) -> None:
+    """Harvest 0.5-0.7 could leave runtimes readable only by the copy of Harvest
+    that installed them (see _install). Reset them to the normal inherited
+    permissions once. Only works from a process that can still open them, so
+    the tray app and the background copy both try; the mark is written once it
+    has worked."""
+    if not supported() or not root().is_dir() or (root() / ACL_MARK).exists():
+        return
+    try:
+        r = subprocess.run(["icacls", str(root()), "/reset", "/T", "/C", "/Q"], capture_output=True, text=True,
+                           timeout=600, creationflags=NO_WINDOW)
+        failed = re.search(r"Failed processing (\d+) files", r.stdout or "")
+        if r.returncode == 0 and failed and failed.group(1) == "0":
+            (root() / ACL_MARK).write_text(time.strftime("%Y-%m-%d %H:%M:%S"))
+            log("runtime folder permissions checked")
+        else:
+            log("could not reset runtime folder permissions yet (another Harvest process will retry)")
+    except (OSError, subprocess.SubprocessError):
+        pass
 
 
 # --- one call for the agent ----------------------------------------------------
