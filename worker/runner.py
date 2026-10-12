@@ -26,6 +26,7 @@ import hashlib
 import re
 import json
 import os
+import platform
 import queue
 import shutil
 import subprocess
@@ -123,6 +124,9 @@ def _python_exe() -> str | None:
         managed = runtimes.managed_python()  # Harvest's own copy (see runtimes.py)
         if managed:
             candidates.append(managed)
+    if sys.platform == "darwin" and subprocess.run(["xcode-select", "-p"], capture_output=True).returncode != 0:
+        # Without the Command Line Tools, /usr/bin/python3 only pops up an "install" dialog.
+        candidates = [c for c in candidates if not c.startswith("/usr/bin/")]
     for exe in candidates:
         real = _real_python(exe)
         if real:
@@ -304,6 +308,17 @@ def _command(spec: dict, work: Path, on_log, env, should_stop):
     return [py, "-u", entry, *args]
 
 
+def gpu_device() -> str:
+    """The PyTorch device name for this machine's GPU."""
+    if shutil.which("nvidia-smi"):
+        return "cuda"
+    if sys.platform == "darwin" and platform.machine() == "arm64":
+        return "mps"  # Apple silicon GPU through Metal
+    if sys.platform == "darwin":
+        return "mps"  # Intel Macs with a Metal GPU (macOS 12.3+)
+    return "cpu"
+
+
 def task_dir(job_id: str) -> Path:
     return WORK_ROOT / job_id
 
@@ -369,6 +384,7 @@ def run_job(
         env["HARVEST_STEPS"] = str(spec.get("episodes_total") or "")  # "Expected steps" from the task
         env["HARVEST_PARAMS"] = json.dumps(spec.get("params") or {})  # this run's sweep values
         env["HARVEST_JOB_ID"] = str(job.get("id", ""))
+        env["HARVEST_DEVICE"] = gpu_device()  # "cuda", "mps" (Mac GPU) or "cpu": torch.device(os.environ["HARVEST_DEVICE"])
         share = job.get("share") or {}
         if share.get("url") and share.get("token"):  # copies started together can share results
             env["HARVEST_SHARE_URL"] = str(share["url"])

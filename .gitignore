@@ -40,3 +40,9 @@ dist/
 examples/*/.venv/
 examples/*/outputs/
 examples/*/my_run.json
+
+# Mac app build outputs (generated in CI)
+desktop/mac/menubar.png
+desktop/mac/Harvest.icns
+desktop/mac/build/
+desktop/mac/dist/

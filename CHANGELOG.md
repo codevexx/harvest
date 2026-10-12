@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.9.0
+
+- **Harvest for Mac.** A menu bar app for Macs with Apple silicon: status, power mode, pause, the dashboard,
+  start at login and automatic updates, one click away. Install with
+  `curl -fsSL https://harvest.codevexx.com/install.sh | sh` (or download Harvest-mac.dmg). It replaces the
+  command-line Mac service if you had it.
+- **Mac GPUs.** Macs report their GPU (Metal), and tasks can ask for "NVIDIA (CUDA)", "Mac (Metal)" or "Any
+  GPU". Every task gets `HARVEST_DEVICE` (`cuda`, `mps` or `cpu`), so the same PyTorch code uses whichever GPU
+  the machine has.
+- The dashboard shows macOS versions by name.
+
 ## v0.8.0
 
 - **macOS and Linux.** `curl -fsSL https://harvest.codevexx.com/install.sh | sh` installs the agent for your user

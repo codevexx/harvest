@@ -3,13 +3,14 @@
 #
 #   curl -fsSL https://harvest.codevexx.com/install.sh | sh
 #
-# Installs the Harvest agent for your user (no root needed), asks for your
-# connect token, and starts it in the background:
+# macOS (Apple silicon): installs the Harvest menu bar app and opens it.
+# Linux (and Intel Macs, or with --service): installs the Harvest agent for your
+# user (no root needed), asks for your connect token, and runs it in the background:
 #   macOS: a LaunchAgent (runs while you are signed in)
 #   Linux: a systemd user service (runs at boot if lingering is allowed)
-# It updates itself from GitHub Releases, checking each download's SHA-256.
+# Everything updates itself from GitHub Releases, checking each download's SHA-256.
 #
-# Options: --token hv_...  --name NAME  --server URL  --no-service  --uninstall
+# Options: --token hv_...  --name NAME  --server URL  --service  --no-service  --uninstall
 set -eu
 
 SERVER="https://harvest.codevexx.com"
@@ -17,6 +18,7 @@ TOKEN=""
 NAME=""
 SERVICE=1
 UNINSTALL=0
+FORCE_SERVICE=0
 REPO="codevexx/harvest"
 
 while [ $# -gt 0 ]; do
@@ -25,6 +27,7 @@ while [ $# -gt 0 ]; do
     --name) NAME="$2"; shift 2 ;;
     --server) SERVER="$2"; shift 2 ;;
     --no-service) SERVICE=0; shift ;;
+    --service) FORCE_SERVICE=1; shift ;;
     --uninstall) UNINSTALL=1; shift ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
@@ -52,10 +55,85 @@ stop_service() {
 
 if [ "$UNINSTALL" = 1 ]; then
   stop_service
+  if [ "$OS" = Darwin ]; then
+    pkill -x Harvest 2>/dev/null || true
+    rm -rf /Applications/Harvest.app "$HOME/Applications/Harvest.app" "$HOME/Library/LaunchAgents/com.codevexx.harvest.app.plist"
+  fi
   rm -f "$PLIST" "$UNIT"
   command -v systemctl >/dev/null 2>&1 && systemctl --user daemon-reload 2>/dev/null || true
   rm -rf "$HOME_DIR"
   say "Harvest removed. (Remove the machine from your dashboard too, if you like.)"
+  exit 0
+fi
+
+sha256() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'; else shasum -a 256 "$1" | awk '{print $1}'; fi; }
+
+write_config() {  # coordinator, token and name into config.json (private to you)
+  [ -n "$TOKEN" ] || return 0
+  case "$TOKEN" in hv_*) ;; *) fail "that does not look like a connect token (it starts with hv_)" ;; esac
+  [ -n "$NAME" ] || NAME=$(hostname -s 2>/dev/null || hostname)
+  mkdir -p "$HOME_DIR"
+  umask 077
+  f="$HOME_DIR/config.json"
+  if [ -n "${PY:-}" ]; then
+    HARVEST_SERVER="$SERVER" HARVEST_TOKEN="$TOKEN" HARVEST_NAME="$NAME" HARVEST_PY="$PY" "$PY" - "$f" <<'PYEOF'
+import json, os, sys
+path = sys.argv[1]
+cfg = {}
+if os.path.exists(path):
+    try: cfg = json.load(open(path))
+    except ValueError: pass
+cfg.update(coordinator=os.environ["HARVEST_SERVER"], token=os.environ["HARVEST_TOKEN"],
+           name=os.environ["HARVEST_NAME"], python=os.environ["HARVEST_PY"])
+with open(path, "w") as f: json.dump(cfg, f, indent=2)
+PYEOF
+  else  # macOS app install: no Python needed; macOS's own JavaScript edits the file
+    js="$TMP/config.js"
+    cat > "$js" <<'JSEOF'
+ObjC.import("Foundation");
+function run(argv) {
+  const [path, server, token, name] = argv;
+  let cfg = {};
+  const s = $.NSString.stringWithContentsOfFileEncodingError(path, $.NSUTF8StringEncoding, null);
+  if (s && !s.isNil()) { try { cfg = JSON.parse(ObjC.unwrap(s)); } catch (e) { cfg = {}; } }
+  cfg.coordinator = server; cfg.token = token; cfg.name = name;
+  $(JSON.stringify(cfg, null, 2)).writeToFileAtomicallyEncodingError(path, true, $.NSUTF8StringEncoding, null);
+}
+JSEOF
+    osascript -l JavaScript "$js" "$f" "$SERVER" "$TOKEN" "$NAME" >/dev/null || fail "could not save your settings"
+  fi
+  chmod 600 "$f"
+}
+
+# --- macOS on Apple silicon: the menu bar app ------------------------------------
+if [ "$OS" = Darwin ] && [ "$FORCE_SERVICE" = 0 ] && [ "$(uname -m)" = arm64 ]; then
+  TMP=$(mktemp -d "${TMPDIR:-/tmp}/harvest.XXXXXX")
+  trap 'rm -rf "$TMP"' EXIT
+  if [ -n "${HARVEST_APP_ZIP:-}" ]; then  # for testing: a local build
+    cp "$HARVEST_APP_ZIP" "$TMP/app.zip"; want=$(awk '{print $1}' "$HARVEST_APP_ZIP.sha256")
+  else
+    URL="https://github.com/$REPO/releases/latest/download/Harvest-mac.zip"
+    say "Downloading Harvest for Mac"
+    curl -fsSL "$URL" -o "$TMP/app.zip" || fail "could not download $URL"
+    want=$(curl -fsSL "$URL.sha256" | awk '{print $1}') || fail "could not download the checksum"
+  fi
+  [ "$(sha256 "$TMP/app.zip")" = "$want" ] || fail "the download did not match its published checksum; not installing"
+  ditto -x -k "$TMP/app.zip" "$TMP/x"
+  [ -d "$TMP/x/Harvest.app/Contents/MacOS" ] || fail "the download is not the Harvest app"
+  DEST="${HARVEST_APP_DEST:-/Applications}"  # (override for testing)
+  [ -w "$DEST" ] || { DEST="$HOME/Applications"; mkdir -p "$DEST"; }
+  pkill -x Harvest 2>/dev/null || true
+  stop_service  # the app replaces the command-line service
+  rm -rf "$DEST/Harvest.app"
+  mv "$TMP/x/Harvest.app" "$DEST/Harvest.app"
+  if [ -z "$TOKEN" ] && [ ! -f "$HOME_DIR/config.json" ] && [ -r /dev/tty ]; then
+    printf 'Paste your connect token (from the dashboard: Machines > Connect a machine), or press Enter to do it in the app: '
+    read -r TOKEN < /dev/tty || true
+  fi
+  write_config
+  [ -n "${HARVEST_NO_OPEN:-}" ] || open "$DEST/Harvest.app"
+  say "Harvest is installed in $DEST and running: look for the leaf in your menu bar."
+  echo "It starts when you sign in and updates itself. Remove: curl -fsSL $SERVER/install.sh | sh -s -- --uninstall"
   exit 0
 fi
 
@@ -87,9 +165,7 @@ else
   curl -fsSL "$URL" -o "$TMP/agent.tar.gz" || fail "could not download $URL"
   sha_want=$(curl -fsSL "$URL.sha256" | awk '{print $1}') || fail "could not download the checksum"
 fi
-if command -v sha256sum >/dev/null 2>&1; then sha_got=$(sha256sum "$TMP/agent.tar.gz" | awk '{print $1}')
-else sha_got=$(shasum -a 256 "$TMP/agent.tar.gz" | awk '{print $1}'); fi
-[ "$sha_got" = "$sha_want" ] || fail "the download did not match its published checksum; not installing"
+[ "$(sha256 "$TMP/agent.tar.gz")" = "$sha_want" ] || fail "the download did not match its published checksum; not installing"
 
 rm -rf "$HOME_DIR/app.new"
 mkdir -p "$HOME_DIR/app.new"
@@ -112,23 +188,7 @@ if [ -z "$TOKEN" ] && [ ! -f "$CONFIG" ]; then
     read -r TOKEN < /dev/tty
   fi
 fi
-if [ -n "$TOKEN" ]; then
-  case "$TOKEN" in hv_*) ;; *) fail "that does not look like a connect token (it starts with hv_)" ;; esac
-  [ -n "$NAME" ] || NAME=$(hostname -s 2>/dev/null || hostname)
-  umask 077
-  HARVEST_SERVER="$SERVER" HARVEST_TOKEN="$TOKEN" HARVEST_NAME="$NAME" HARVEST_PY="$PY" "$PY" - "$CONFIG" <<'EOF'
-import json, os, sys
-path = sys.argv[1]
-cfg = {}
-if os.path.exists(path):
-    try: cfg = json.load(open(path))
-    except ValueError: pass
-cfg.update(coordinator=os.environ["HARVEST_SERVER"], token=os.environ["HARVEST_TOKEN"],
-           name=os.environ["HARVEST_NAME"], python=os.environ["HARVEST_PY"])
-with open(path, "w") as f: json.dump(cfg, f, indent=2)
-EOF
-  chmod 600 "$CONFIG"
-fi
+write_config
 [ -f "$CONFIG" ] || fail "no connect token given. Run again and paste it when asked (or add --token hv_...)."
 
 # --- start in the background ----------------------------------------------------------

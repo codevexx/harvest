@@ -19,6 +19,7 @@ import platform
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -41,6 +42,23 @@ CONFIG_PATH = Path(__file__).parent / "worker.config.json"
 
 
 # --- describe this machine ----------------------------------------------
+
+def detect_mac_gpu() -> str | None:
+    """The Mac's GPU (Apple silicon, or the Radeon in an Intel Mac): all support Metal,
+    which PyTorch uses as the "mps" device."""
+    if sys.platform != "darwin":
+        return None
+    try:
+        out = subprocess.check_output(["system_profiler", "SPDisplaysDataType", "-json"], text=True,
+                                      stderr=subprocess.DEVNULL, timeout=20)
+        for g in json.loads(out).get("SPDisplaysDataType", []):
+            if g.get("spdisplays_mtlgpufamilysupport") or g.get("spdisplays_metal"):
+                cores = g.get("sppci_cores")
+                return g.get("sppci_model", "Mac GPU") + (f" ({cores}-core GPU)" if cores else "")
+    except Exception:
+        pass
+    return None
+
 
 def detect_gpu() -> tuple[str | None, bool]:
     try:
@@ -100,10 +118,17 @@ def detect_specs() -> dict:
     if psutil is not None:
         ram_gb = round(psutil.virtual_memory().total / 1e9)
         cores = psutil.cpu_count(logical=True)
+    gpu_kind = "cuda" if is_nvidia else None
+    if not gpu:
+        mac = detect_mac_gpu()
+        if mac:
+            gpu, gpu_kind = mac, "metal"
     return {
         "cpu": platform.processor() or platform.machine(),
         "cores": cores, "ram_gb": ram_gb, "gpu": gpu,
-        "has_gpu": is_nvidia, "os": f"{platform.system()} {platform.release()}",
+        "has_gpu": is_nvidia,  # NVIDIA (CUDA); kept for older servers
+        "gpu_kind": gpu_kind,  # "cuda" | "metal" | None
+        "os": f"macOS {platform.mac_ver()[0]}" if sys.platform == "darwin" else f"{platform.system()} {platform.release()}",
         "runtimes": detect_runtimes(),
     }
 

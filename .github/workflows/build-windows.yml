@@ -133,3 +133,49 @@ jobs:
             dist/install.sh
             dist/install.sh.sha256
           fail_on_unmatched_files: true
+
+  # Harvest.app for Macs with Apple silicon: Harvest-mac.dmg to download, and
+  # Harvest-mac.zip for the app's self-updater (refused without a matching .sha256).
+  mac:
+    needs: build
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r desktop/mac/requirements.txt pyinstaller
+
+      - name: Stamp version from tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: echo "__version__ = \"${GITHUB_REF_NAME#v}\"" > desktop/version.py
+
+      - name: Build Harvest.app
+        working-directory: desktop/mac
+        run: |
+          python make_mac_icons.py
+          pyinstaller --noconfirm --distpath ../../dist --workpath ../../build Harvest.spec
+          plutil -p ../../dist/Harvest.app/Contents/Info.plist | grep -E "LSUIElement|ShortVersion"
+          codesign --verify --deep ../../dist/Harvest.app && echo "signature ok (ad hoc)"
+
+      - name: Package (zip for updates, dmg to download)
+        run: |
+          cd dist
+          ditto -c -k --keepParent Harvest.app Harvest-mac.zip
+          mkdir dmg && cp -R Harvest.app dmg/ && ln -s /Applications dmg/Applications
+          hdiutil create -volname Harvest -srcfolder dmg -ov -format UDZO Harvest-mac.dmg
+          for f in Harvest-mac.zip Harvest-mac.dmg; do shasum -a 256 "$f" > "$f.sha256"; cat "$f.sha256"; done
+
+      - name: Publish to Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/Harvest-mac.dmg
+            dist/Harvest-mac.dmg.sha256
+            dist/Harvest-mac.zip
+            dist/Harvest-mac.zip.sha256
+          fail_on_unmatched_files: true
