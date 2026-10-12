@@ -73,6 +73,19 @@ def detect_gpu() -> tuple[str | None, bool]:
     return None, False
 
 
+def detect_gpu_cc() -> float | None:
+    """NVIDIA compute capability (6.1 = Pascal, 7.5 = Turing, 12.0 = RTX 50): current
+    PyTorch builds only run on 7.5 and newer, so tasks can ask for a minimum."""
+    try:
+        out = subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=compute_cap", "--format=csv,noheader"],
+            text=True, stderr=subprocess.DEVNULL, timeout=5,
+        ).strip()
+        return float(out.splitlines()[0]) if out else None
+    except Exception:
+        return None
+
+
 def detect_runtimes() -> list[str]:
     """Which task kinds this machine can run: python, node, browser."""
     found = []
@@ -128,6 +141,7 @@ def detect_specs() -> dict:
         "cores": cores, "ram_gb": ram_gb, "gpu": gpu,
         "has_gpu": is_nvidia,  # NVIDIA (CUDA); kept for older servers
         "gpu_kind": gpu_kind,  # "cuda" | "metal" | None
+        "gpu_cc": detect_gpu_cc() if is_nvidia else None,
         "os": f"macOS {platform.mac_ver()[0]}" if sys.platform == "darwin" else f"{platform.system()} {platform.release()}",
         "runtimes": detect_runtimes(),
     }

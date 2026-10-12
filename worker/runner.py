@@ -359,7 +359,35 @@ def _reader(stream, q: "queue.Queue[str | None]") -> None:
     q.put(None)  # sentinel: stream closed
 
 
-def run_job(
+SECRET_NAME = re.compile(r"^[A-Z][A-Z0-9_]{1,63}$")
+
+
+def _secrets(job: dict) -> dict[str, str]:
+    """The farm secrets this task asked for, sent by the server with the job (never stored in it)."""
+    env = job.get("env") or {}
+    if not isinstance(env, dict):
+        return {}
+    return {k: str(v) for k, v in env.items()
+            if isinstance(k, str) and SECRET_NAME.match(k) and not k.startswith("HARVEST_") and v is not None}
+
+
+def _redact(values):
+    """Hide secret values in text that leaves the machine (task output, errors)."""
+    vals = sorted({v for v in values if len(v) >= 4}, key=len, reverse=True)
+    if not vals:
+        return lambda text: text
+    pat = re.compile("|".join(re.escape(v) for v in vals))
+    return lambda text: pat.sub("[secret]", text) if isinstance(text, str) else text
+
+
+def run_job(job: dict, *, on_log: Callable[[str], None], **kw) -> tuple[str, str | None]:
+    """Returns (status, error): status is 'done' | 'failed' | 'interrupted'."""
+    hide = _redact(_secrets(job).values())
+    status, error = _run_job(job, on_log=lambda line: on_log(hide(line)), **kw)
+    return status, hide(error) if error else error
+
+
+def _run_job(
     job: dict,
     *,
     on_episode: Callable[[int, float, int, dict], None],
@@ -384,6 +412,7 @@ def run_job(
         env["HARVEST_STEPS"] = str(spec.get("episodes_total") or "")  # "Expected steps" from the task
         env["HARVEST_PARAMS"] = json.dumps(spec.get("params") or {})  # this run's sweep values
         env["HARVEST_JOB_ID"] = str(job.get("id", ""))
+        env.update(_secrets(job))  # farm secrets the task asked for (the dashboard's Secrets)
         env["HARVEST_DEVICE"] = gpu_device()  # "cuda", "mps" (Mac GPU) or "cpu": torch.device(os.environ["HARVEST_DEVICE"])
         share = job.get("share") or {}
         if share.get("url") and share.get("token"):  # copies started together can share results

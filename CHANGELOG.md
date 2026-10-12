@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.11.0
+
+- **Secrets.** Save API keys your tasks need (like `ROBOFLOW_API_KEY` or `HF_TOKEN`) once per farm in the
+  dashboard. They are stored encrypted, only sent to a machine running a task that asks for them, and show as
+  `[secret]` in task output.
+- **Starter templates.** Ready-made tasks you start by filling in a few fields: train YOLO on a Roboflow dataset,
+  PPO reinforcement learning, a quick machine check and a page load timer. Your AI can start them too, through
+  the Harvest MCP server.
+- Machines report their NVIDIA GPU generation, so tasks that need a newer GPU (current PyTorch needs an RTX 20
+  series or newer) only go to machines that can run them.
+
 ## v0.10.0
 
 - **Live machine stats.** Harvest now reports each machine's CPU, memory and GPU load, so the new dashboard can
