@@ -116,7 +116,8 @@ jobs:
           cp worker/*.py pkg/worker/
           cp LICENSE NOTICE pkg/
           pip install --quiet requests psutil
-          python3 -c "import sys; sys.path.insert(0, 'pkg'); import worker.agent, worker.daemon, worker.idle; print('imports ok')"
+          python3 -B -c "import sys; sys.path.insert(0, 'pkg'); import worker.agent, worker.daemon, worker.idle; print('imports ok')"
+          find pkg -name __pycache__ -prune -exec rm -rf {} +
           tar -czf dist/harvest-agent.tar.gz -C pkg .
           cp install/install.sh dist/install.sh
           sh -n dist/install.sh
