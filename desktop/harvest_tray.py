@@ -559,6 +559,13 @@ def run_headless() -> int:
         lambda: state["thread"] is None or not state["thread"].is_alive(), quit_flag.set)).start()
 
     while not quit_flag.is_set():
+        # Runtimes this background copy installed may be locked to it (Harvest 0.5-0.7):
+        # unlock them even while the tray app is the one working, since only we can.
+        try:
+            from worker import runtimes as rt
+            rt.repair_permissions(lambda m: print(f"background: {m}"))
+        except Exception:
+            pass
         cfg = load_config()
         cfg["headless"] = True
         if cfg.get("python"):

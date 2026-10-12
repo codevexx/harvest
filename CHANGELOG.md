@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.7.2
+
+- The background copy of Harvest now also repairs locked runtime folders while the Harvest app is open, so PCs
+  where the app was already running get fixed too.
+
 ## v0.7.1
 
 - Fixed: the Harvest app could stay on "Connecting" after the background copy had installed Python (the folder
