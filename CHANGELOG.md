@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.9.3
+
+- **New look.** The Harvest app's panel matches the redesigned website and dashboard: dark, sharp and
+  number-first, with the new leaf.
+
 ## v0.9.2
 
 - Harvest-mac.dmg with the new "Install Harvest" window (the 0.9.1 Mac build did not finish). Everything else
