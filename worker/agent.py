@@ -33,6 +33,7 @@ try:
 except ImportError:
     psutil = None
 
+from . import cleanup as proc_cleanup
 from . import idle
 from . import runtimes as setup_mod
 from .runner import (NO_WINDOW, START_MARK, _node_exe, _python_exe, cleanup, created_files, reset_discovery,
@@ -227,6 +228,30 @@ class Client:
             self.s.headers["authorization"] = f"Bearer {token}"
         self.worker_id: str | None = None
         self.poll_hint: int | None = None
+        self._seen_commands: set[str] = set()
+
+    # Requests from the dashboard (for now the process clean-up) ride along with
+    # check-ins; each runs in the background and posts its result back.
+    def handle_commands(self, data) -> None:
+        if not self.cloud or not isinstance(data, dict):
+            return
+        for cmd in data.get("commands") or []:
+            cid = cmd.get("id") if isinstance(cmd, dict) else None
+            if not cid or cid in self._seen_commands:
+                continue
+            self._seen_commands.add(cid)
+            threading.Thread(target=self._run_command, args=(cmd,), daemon=True).start()
+
+    def _run_command(self, cmd: dict) -> None:
+        try:
+            result = proc_cleanup.run(cmd)
+        except Exception as e:  # report it instead of failing silently
+            result = {"error": f"{type(e).__name__}: {e}"}
+        try:
+            self.s.post(f"{self.base}/api/agent/command", timeout=30,
+                        json={"worker_id": self.worker_id, "id": cmd["id"], "ok": "error" not in result, "result": result})
+        except requests.RequestException:
+            self._seen_commands.discard(cmd["id"])  # the server sends it again
 
     def register(self, name, specs) -> str:
         if self.cloud:
@@ -285,9 +310,11 @@ class Client:
             if r.status_code == 404:
                 raise ReRegister()
             try:
-                return self.sync_override(cfg, r.json())
+                data = r.json()
             except ValueError:
                 return False
+            self.handle_commands(data)
+            return self.sync_override(cfg, data)
         else:
             self.s.post(f"{self.base}/api/workers/{self.worker_id}/heartbeat",
                         json={"mode": mode, "status": status}, timeout=15)
@@ -308,6 +335,7 @@ class Client:
             r = self.s.get(f"{self.base}/api/workers/{self.worker_id}/next",
                            params={"has_gpu": g}, timeout=15)
         data = r.json()
+        self.handle_commands(data)
         self.poll_hint = data.get("poll")  # server: "work is waiting, ask again in N s"
         self.override_changed = self.sync_override(cfg, data)
         if self.override_changed and data.get("override") == "paused":
@@ -329,6 +357,7 @@ class Client:
         if o:
             body["override"] = o
         data = self.s.post(f"{self.base}/api/agent/progress", timeout=20, json=body).json()
+        self.handle_commands(data)
         self.sync_override(cfg, data)  # e.g. "paused" from the dashboard stops this task
         return data.get("status")
 

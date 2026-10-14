@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.12.0
+
+- **Clean up processes.** From a machine's menu on the dashboard, see what is using RAM and CPU and close what you
+  don't need. Known background helpers (updaters, crash reporters, widgets) are suggested; everything else is your
+  call, and open apps are asked to close normally so they can save first. Windows system processes, security
+  software, drivers, Harvest itself and running tasks are never touched. On Windows you can also stop an app from
+  starting with the computer (the same switch as Task Manager's Startup tab) and turn it back on later.
+
 ## v0.11.0
 
 - **Secrets.** Save API keys your tasks need (like `ROBOFLOW_API_KEY` or `HF_TOKEN`) once per farm in the
