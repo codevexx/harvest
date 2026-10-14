@@ -151,41 +151,70 @@ def detect_specs() -> dict:
 # --- machine load, shown live on the dashboard ----------------------------
 
 class Telemetry:
-    """CPU, memory and GPU use in percent. GPU: NVIDIA via nvidia-smi, Macs via
-    the GPU's own statistics; checked at most every 10 s (it runs a program)."""
+    """CPU, memory and GPU use in percent; NVIDIA GPU temperature (°C) and power
+    draw (W); CPU temperature where the OS offers it (Linux). GPU: NVIDIA via
+    nvidia-smi, Macs via the GPU's own statistics (Macs don't report temperature or
+    power without admin rights); checked at most every 10 s (it runs a program)."""
 
     def __init__(self):
-        self._gpu, self._gpu_t = None, 0.0
+        self._gpu, self._gpu_t = {}, 0.0
         if psutil is not None:
             psutil.cpu_percent(None)  # start the measuring window
 
-    def _gpu_util(self):
+    def _gpu_stats(self) -> dict:
         if time.monotonic() - self._gpu_t < 10:
             return self._gpu
-        self._gpu_t, val = time.monotonic(), None
+        self._gpu_t, val = time.monotonic(), {}
         try:
             if sys.platform == "darwin":
                 out = subprocess.run(["ioreg", "-r", "-d", "1", "-w", "0", "-c", "IOAccelerator"],
                                      capture_output=True, text=True, timeout=5).stdout
                 m = re.search(r'"Device Utilization %"=(\d+)', out)
-                val = int(m.group(1)) if m else None
+                if m:
+                    val["gpu"] = int(m.group(1))
             else:
-                out = subprocess.run(["nvidia-smi", "--query-gpu=utilization.gpu", "--format=csv,noheader,nounits"],
+                out = subprocess.run(["nvidia-smi", "--query-gpu=utilization.gpu,temperature.gpu,power.draw",
+                                      "--format=csv,noheader,nounits"],
                                      capture_output=True, text=True, timeout=5, creationflags=NO_WINDOW).stdout
-                val = int(out.split()[0]) if out.strip() else None
+                rows = [[c.strip() for c in line.split(",")] for line in out.strip().splitlines() if line.strip()]
+                num = lambda s: float(s) if re.fullmatch(r"[0-9.]+", s or "") else None
+                utils = [num(r[0]) for r in rows if len(r) > 0]
+                temps = [num(r[1]) for r in rows if len(r) > 1]
+                watts = [num(r[2]) for r in rows if len(r) > 2]
+                if any(u is not None for u in utils):
+                    val["gpu"] = round(max(u for u in utils if u is not None))
+                if any(t is not None for t in temps):
+                    val["gpu_temp"] = round(max(t for t in temps if t is not None))
+                if any(w is not None for w in watts):  # several cards: total draw
+                    val["gpu_w"] = round(sum(w for w in watts if w is not None))
         except (OSError, ValueError, IndexError, subprocess.SubprocessError):
-            val = None
+            val = {}
         self._gpu = val
         return val
+
+    @staticmethod
+    def _cpu_temp():
+        """Hottest CPU sensor (Linux only; Windows and macOS need admin rights or drivers)."""
+        try:
+            temps = psutil.sensors_temperatures() if hasattr(psutil, "sensors_temperatures") else {}
+        except Exception:
+            return None
+        for name in ("coretemp", "k10temp", "zenpower", "cpu_thermal", "acpitz"):
+            vals = [t.current for t in temps.get(name, []) if t.current]
+            if vals:
+                return round(max(vals))
+        return None
 
     def sample(self) -> dict:
         d = {}
         if psutil is not None:
             d["cpu"] = round(psutil.cpu_percent(None))
             d["mem"] = round(psutil.virtual_memory().percent)
-        g = self._gpu_util()
-        if g is not None:
-            d["gpu"] = g
+            if sys.platform.startswith("linux"):
+                t = self._cpu_temp()
+                if t is not None:
+                    d["cpu_temp"] = t
+        d.update(self._gpu_stats())
         return d
 
 

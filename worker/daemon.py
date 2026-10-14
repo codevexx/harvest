@@ -8,7 +8,14 @@ systemd (Linux, also before anyone logs in when lingering is allowed):
     <HARVEST_HOME>/config.json   server, connect token, machine name
 
 It runs the agent and, every few hours, updates itself from the latest GitHub
-release: the new harvest-agent.tar.gz is checked against its published .sha256,
+release.
+
+The Linux tray icon (worker/tray_linux.py) is only a remote control for this
+service: it reads <HARVEST_HOME>/status.json (written here on every change) and
+sets the power mode by editing config.json, which this process re-reads every
+few seconds. So closing the tray never stops the work.
+
+Updates: the new harvest-agent.tar.gz is checked against its published .sha256,
 unpacked next to the current version and swapped in while no task is running.
 The process then exits and the service manager starts the new version.
 """
@@ -104,6 +111,45 @@ def install_update(tag: str) -> None:
         os.replace(new, home() / "app")
 
 
+def _write_status(cfg: dict, mode, st, detail) -> None:
+    """For the tray icon: what the agent is doing right now."""
+    data = {"mode": mode, "state": st, "detail": detail, "override": cfg.get("mode_override"),
+            "name": cfg.get("name"), "farm": cfg.get("farm_name"), "version": version(), "ts": time.time()}
+    try:
+        tmp = home() / "status.json.tmp"
+        tmp.write_text(json.dumps(data))
+        os.replace(tmp, home() / "status.json")
+    except OSError:
+        pass
+
+
+def _reload_settings(cfg: dict, last_mtime: list) -> None:
+    """Pick up power-mode changes the tray wrote to config.json."""
+    try:
+        mtime = (home() / "config.json").stat().st_mtime
+    except OSError:
+        return
+    if mtime == last_mtime[0]:
+        return
+    last_mtime[0] = mtime
+    try:
+        new = json.loads((home() / "config.json").read_text())
+    except (OSError, ValueError):
+        return
+    if new.get("override_dirty"):  # the tray changed it: the agent sends it with its next check-in
+        cfg["mode_override"] = new.get("mode_override")
+        cfg["override_dirty"] = True
+        new["override_dirty"] = False
+        try:
+            (home() / "config.json").write_text(json.dumps(new, indent=1))
+            last_mtime[0] = (home() / "config.json").stat().st_mtime
+        except OSError:
+            pass
+    for k in ("last_power", "games", "idle_threshold"):
+        if k in new:
+            cfg[k] = new[k]
+
+
 def main() -> None:
     cfg = load_config()
     if not cfg.get("token"):
@@ -114,15 +160,26 @@ def main() -> None:
 
     def on_status(mode, st, detail, last={}):
         state["busy"] = st == "busy"
-        if (mode, st, detail) != last.get("v"):
-            last["v"] = (mode, st, detail)
+        if (mode, st, detail, cfg.get("mode_override")) != last.get("v"):
+            last["v"] = (mode, st, detail, cfg.get("mode_override"))
             print(f"{mode}/{st}" + (f" {detail}" if detail else ""), flush=True)
+            _write_status(cfg, mode, st, detail)
+        state["last"] = (mode, st, detail)
 
-    t = threading.Thread(target=run_agent, args=(cfg, stop, on_status), daemon=True)
+    def on_info(kw):
+        if "farm" in kw:
+            cfg["farm_name"] = kw["farm"]
+
+    t = threading.Thread(target=run_agent, args=(cfg, stop, on_status, on_info), daemon=True)
     t.start()
     next_check = time.monotonic() + 120
+    last_mtime = [None]
+    _reload_settings(cfg, last_mtime)
     while t.is_alive():
         time.sleep(5)
+        _reload_settings(cfg, last_mtime)
+        if state.get("last"):  # refresh the timestamp so the tray knows the service is alive
+            _write_status(cfg, *state["last"])
         if cfg.get("auto_update", True) and time.monotonic() >= next_check and not state["busy"]:
             next_check = time.monotonic() + CHECK_EVERY
             try:

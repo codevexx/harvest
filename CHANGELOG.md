@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.13.0
+
+- **Temperatures, power and energy cost.** NVIDIA machines now report GPU temperature and power draw (Linux also
+  reports CPU temperature), shown on each machine on the dashboard with an estimate of the whole PC's power use.
+  Each task adds up its estimated energy; set your electricity price (farm menu) to see what a task cost to run.
+- **Linux tray icon.** On Linux desktops, install.sh adds a tray icon with Harvest's status, power mode (auto, full,
+  light), pause, the dashboard and "show at login". It is a remote control for the background service, so closing
+  it never stops the work. Skip it with `--no-tray`.
+
 ## v0.12.0
 
 - **Clean up processes.** From a machine's menu on the dashboard, see what is using RAM and CPU and close what you

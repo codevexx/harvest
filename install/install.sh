@@ -7,10 +7,11 @@
 # Linux (and Intel Macs, or with --service): installs the Harvest agent for your
 # user (no root needed), asks for your connect token, and runs it in the background:
 #   macOS: a LaunchAgent (runs while you are signed in)
-#   Linux: a systemd user service (runs at boot if lingering is allowed)
+#   Linux: a systemd user service (runs at boot if lingering is allowed), plus a
+#          tray icon on desktops (status, power mode, pause) unless --no-tray
 # Everything updates itself from GitHub Releases, checking each download's SHA-256.
 #
-# Options: --token hv_...  --name NAME  --server URL  --service  --no-service  --uninstall
+# Options: --token hv_...  --name NAME  --server URL  --service  --no-service  --no-tray  --uninstall
 set -eu
 
 SERVER="https://harvest.codevexx.com"
@@ -19,6 +20,7 @@ NAME=""
 SERVICE=1
 UNINSTALL=0
 FORCE_SERVICE=0
+TRAY=1
 REPO="codevexx/harvest"
 
 while [ $# -gt 0 ]; do
@@ -28,6 +30,7 @@ while [ $# -gt 0 ]; do
     --server) SERVER="$2"; shift 2 ;;
     --no-service) SERVICE=0; shift ;;
     --service) FORCE_SERVICE=1; shift ;;
+    --no-tray) TRAY=0; shift ;;
     --uninstall) UNINSTALL=1; shift ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
@@ -55,6 +58,8 @@ stop_service() {
 
 if [ "$UNINSTALL" = 1 ]; then
   stop_service
+  pkill -f "worker.tray_linux" 2>/dev/null || true
+  rm -f "${XDG_CONFIG_HOME:-$HOME/.config}/autostart/harvest-tray.desktop"
   if [ "$OS" = Darwin ]; then
     pkill -x Harvest 2>/dev/null || true
     rm -rf /Applications/Harvest.app "$HOME/Applications/Harvest.app" "$HOME/Library/LaunchAgents/com.codevexx.harvest.app.plist"
@@ -260,4 +265,23 @@ EOF
     say "Harvest is running. To keep it running when you are logged out, run once: sudo loginctl enable-linger $(id -un)"
   fi
   echo "Log: journalctl --user -u harvest -f    Remove: curl -fsSL $SERVER/install.sh | sh -s -- --uninstall"
+
+  # --- tray icon on desktops (a remote control for the service above) ----------------
+  if [ "$TRAY" = 1 ] && [ -n "${XDG_CURRENT_DESKTOP:-}${WAYLAND_DISPLAY:-}${DISPLAY:-}" ]; then
+    VPY="$HOME_DIR/venv/bin/python"
+    if "$VPY" -m pip install --quiet --disable-pip-version-check pystray Pillow; then
+      # GNOME shows tray icons through AppIndicator, which needs the system's python3-gi.
+      if ! "$VPY" -c "import gi" 2>/dev/null && python3 -c "import gi" 2>/dev/null; then
+        GI_DIR=$(python3 -c 'import gi, os; print(os.path.dirname(os.path.dirname(gi.__file__)))')
+        SITE=$("$VPY" -c 'import site; print(site.getsitepackages()[0])')
+        printf '%s\n' "$GI_DIR" > "$SITE/harvest-system-gi.pth"
+      fi
+      (cd "$HOME_DIR/app" && HARVEST_HOME="$HOME_DIR" "$VPY" -c "from worker.tray_linux import set_autostart; set_autostart(True)") || true
+      pkill -f "worker.tray_linux" 2>/dev/null || true
+      (cd "$HOME_DIR/app" && HARVEST_HOME="$HOME_DIR" nohup "$VPY" -m worker.tray_linux >> "$HOME_DIR/tray.log" 2>&1 &)
+      say "The Harvest icon is in your system tray (on GNOME it needs the AppIndicator extension, on by default in Ubuntu)."
+    else
+      echo "Could not install the tray icon's packages; Harvest still runs in the background."
+    fi
+  fi
 fi
