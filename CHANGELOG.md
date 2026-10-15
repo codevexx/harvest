@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.14.0
+
+- **Install apps.** From a machine's menu on the dashboard, install tools your tasks need (Git, Python, Node.js,
+  FFmpeg, uv, CMake, VS Code and more) or search for any app, using the PC's own package manager: winget on
+  Windows, Homebrew on Mac, Homebrew or Flatpak on Linux. Installs are for your user only and never use admin
+  rights; apps that need admin show an error instead. Your AI can ask to install something through the Harvest
+  MCP server, but nothing happens until you approve it on the dashboard.
+- Newly installed tools are picked up right away: tasks started afterwards find them without restarting Harvest.
+
 ## v0.13.0
 
 - **Temperatures, power and energy cost.** NVIDIA machines now report GPU temperature and power draw (Linux also

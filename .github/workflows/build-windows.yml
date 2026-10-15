@@ -117,7 +117,7 @@ jobs:
           cp desktop/icon_art.py pkg/worker/icon_art.py  # the Linux tray icon's leaf
           cp LICENSE NOTICE pkg/
           pip install --quiet requests psutil
-          python3 -B -c "import sys; sys.path.insert(0, 'pkg'); import worker.agent, worker.daemon, worker.idle, worker.tray_linux; print('imports ok')"
+          python3 -B -c "import sys; sys.path.insert(0, 'pkg'); import worker.agent, worker.daemon, worker.idle, worker.tray_linux, worker.apps; print('imports ok')"
           find pkg -name __pycache__ -prune -exec rm -rf {} +
           tar -czf dist/harvest-agent.tar.gz -C pkg .
           cp install/install.sh dist/install.sh

@@ -33,6 +33,7 @@ try:
 except ImportError:
     psutil = None
 
+from . import apps as app_installs
 from . import cleanup as proc_cleanup
 from . import idle
 from . import runtimes as setup_mod
@@ -145,6 +146,7 @@ def detect_specs() -> dict:
         "gpu_cc": detect_gpu_cc() if is_nvidia else None,
         "os": f"macOS {platform.mac_ver()[0]}" if sys.platform == "darwin" else f"{platform.system()} {platform.release()}",
         "runtimes": detect_runtimes(),
+        "app_managers": app_installs.managers(),  # winget / brew / flatpak: what the dashboard's Apps dialog can use
     }
 
 
@@ -258,8 +260,9 @@ class Client:
         self.worker_id: str | None = None
         self.poll_hint: int | None = None
         self._seen_commands: set[str] = set()
+        self.respec = threading.Event()  # an app was installed: re-check what this PC can run
 
-    # Requests from the dashboard (for now the process clean-up) ride along with
+    # Requests from the dashboard (process clean-up, app installs) ride along with
     # check-ins; each runs in the background and posts its result back.
     def handle_commands(self, data) -> None:
         if not self.cloud or not isinstance(data, dict):
@@ -273,7 +276,13 @@ class Client:
 
     def _run_command(self, cmd: dict) -> None:
         try:
-            result = proc_cleanup.run(cmd)
+            if str(cmd.get("kind", "")).startswith("apps_"):
+                result = app_installs.run(cmd)
+                if cmd.get("kind") in ("apps_install", "apps_uninstall") and result.get("ok"):
+                    reset_discovery()  # a new Python or Node.js counts from now on
+                    self.respec.set()
+            else:
+                result = proc_cleanup.run(cmd)
         except Exception as e:  # report it instead of failing silently
             result = {"error": f"{type(e).__name__}: {e}"}
         try:
@@ -684,8 +693,9 @@ def run_agent(cfg: dict, stop_event=None, on_status=None, on_info=None) -> None:
     last_poll, last_mode, quiet_since = 0.0, None, time.monotonic()
     while not stopped():
         try:
-            if setup_done.is_set():  # new runtimes installed: report them
+            if setup_done.is_set() or client.respec.is_set():  # new runtimes or apps installed: report them
                 setup_done.clear()
+                client.respec.clear()
                 specs = detect_specs()
                 specs["agent_version"] = cfg.get("app_version")
                 runtimes = specs["runtimes"]
